@@ -4,15 +4,37 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>adress lists</title>
+    
     <!-- Link to CSS file here later -->
+<style>
+    body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0; 
+    }
+    button {
+        padding: 20px 40px; 
+        font-size: 1.2em;
+        cursor: pointer;
+    }
+</style> 
 </head>
 <body>
     <!-- Your content goes here -->
-    <h1>нажмите на кнопку, чтобы запустить</h1>
+    <button id="myButton">запустить</button>
 
+    <script> 
+        const button = document.getElementById('myButton');
+        button.addEventListener('click', () => {
+            // Здесь вставьте ваш JS код
+            // Например:
+            alert('Кнопка нажата! Запуск вашего кода.');
 
-
-    
-    <script src="script.js"></script>
+            // Или любой другой код:
+            // вашКод();\
+        });
+    </script>
 </body>
 </html>
