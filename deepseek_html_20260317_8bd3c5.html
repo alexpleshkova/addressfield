@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>collage · freeze & explore</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none; /* prevent dragging selection while panning */
+        }
+        body {
+            background: #2a2a2a;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        }
+        .wrapper {
+            background: #1a1a1a;
+            border-radius: 2rem;
+            padding: 2rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+        }
+        canvas {
+            display: block;
+            width: 875px;        /* 3500/4 ≈ 875 — downscale for screen */
+            height: 620px;        /* 2480/4 = 620 */
+            border-radius: 1.2rem;
+            box-shadow: 0 0 0 1px #555, 0 15px 25px rgba(0,0,0,0.5);
+            cursor: grab;
+            background-color: #B5B5B5;  /* matches py5 background */
+        }
+        canvas.panning {
+            cursor: grabbing;
+        }
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 1.5rem;
+            color: #ccc;
+        }
+        button {
+            background: #3b3b3b;
+            border: none;
+            color: white;
+            font-size: 1.6rem;
+            padding: 0.6rem 3rem;
+            border-radius: 4rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            box-shadow: 0 6px 0 #1b1b1b, 0 8px 12px black;
+            cursor: pointer;
+            transition: 0.08s linear;
+            border: 1px solid #6b6b6b;
+        }
+        button:hover {
+            background: #4f4f4f;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 0 #1b1b1b, 0 10px 16px black;
+        }
+        button:active {
+            transform: translateY(4px);
+            box-shadow: 0 2px 0 #1b1b1b, 0 5px 10px black;
+        }
+        .status {
+            background: #2d2d2d;
+            padding: 0.5rem 1.5rem;
+            border-radius: 3rem;
+            font-size: 0.95rem;
+            border: 1px solid #5a5a5a;
+            color: #bebebe;
+        }
+        .status span {
+            color: #d9b48f;
+            font-weight: 600;
+        }
+        .hint {
+            font-size: 0.85rem;
+            color: #888;
+            margin-top: 0.5rem;
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+<div class="wrapper">
+    <canvas id="mainCanvas" width="3500" height="2480"></canvas>
+    <div class="toolbar">
+        <button id="playButton">▶ PLAY</button>
+        <div class="status" id="statusMessage">
+            <span>⚫ idle</span> · click play
+        </div>
+    </div>
+    <div class="hint">
+        ⠀ after freeze: drag to explore zoomed collage
+    </div>
+</div>
+
+<script>
+    (function() {
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const playBtn = document.getElementById('playButton');
+        const statusEl = document.getElementById('statusMessage');
+
+        // ----- fixed dimensions (same as py5) -----
+        const CANVAS_W = 3500;
+        const CANVAS_H = 2480;
+
+        // ----- image list (placeholders + your original filenames) -----
+        // Since we can't load your local files in browser, we use generated
+        // colourful canvases that mimic random pictures.
+        // They will show distinct patterns – each "image" is a unique drawing.
+        const imageCount = 7;   // matching your 7 filenames
+        const imageSources = []; // will hold prepared ImageBitmap / canvas
+
+        // pre–create 7 pattern images (simulate loaded images)
+        function generatePatternImages() {
+            const palette = [
+                ['#3a5f7a', '#d9b48f', '#5f3d2b'], // cool tone
+                ['#6a4c45', '#b58b6b', '#2d4d4a'],
+                ['#887845', '#453f2c', '#b46745'],
+                ['#3e5a4a', '#ac9e8d', '#25413b'],
+                ['#5f4c5b', '#c09b7d', '#384e4e'],
+                ['#2b5e6b', '#d4aa7a', '#40544b'],
+                ['#764b3e', '#b69274', '#264a4f']
+            ];
+            for (let idx = 0; idx < imageCount; idx++) {
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = 500 + idx * 70;      // randomish width 500..1000
+                offCanvas.height = 400 + idx * 50;     // height 400..750
+                const offCtx = offCanvas.getContext('2d');
+                const col = palette[idx % palette.length];
+
+                // background
+                offCtx.fillStyle = col[0];
+                offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+
+                // random shapes (like abstract pictures)
+                for (let s = 0; s < 12; s++) {
+                    offCtx.fillStyle = col[Math.floor(Math.random() * col.length)];
+                    offCtx.beginPath();
+                    const x = Math.random() * offCanvas.width;
+                    const y = Math.random() * offCanvas.height;
+                    const w = 30 + Math.random() * 140;
+                    const h = 30 + Math.random() * 140;
+                    offCtx.fillRect(x, y, w, h);
+                }
+                // add some text to simulate "image ID"
+                offCtx.font = 'bold 60px "Courier New"';
+                offCtx.fillStyle = '#ffffff40';
+                offCtx.fillText('📷', 20, 140);
+                offCtx.fillStyle = '#00000030';
+                offCtx.font = '40px monospace';
+                offCtx.fillText(`#${idx+1}`, 40, 280);
+                imageSources.push(offCanvas);
+            }
+            console.log('generated ' + imageSources.length + ' pattern images');
+        }
+        generatePatternImages();
+
+        // ----- animation state -----
+        let animFrame = null;
+        let active = false;          // whether animation is running
+        let covered = false;         // flag set when background fully covered
+        let finalImageData = null;    // ImageData of the final collage (zoomed version)
+        let freezeImg = null;         // stored full canvas as ImageBitmap for panning
+
+        // ----- pan / zoom state -----
+        let isPanning = false;
+        let startPanX = 0, startPanY = 0;
+        let offsetX = 0, offsetY = 0;    // pan offset (in canvas pixels, initial 0 = centre view)
+        const ZOOM_FACTOR = 2.2;          // zoomed in (same as feeling "zoomed in")
+        // The visible region: we show a window of size (canvas.width/zoom) x (canvas.height/zoom)
+        // and then scale it up. we keep offset clamped.
+
+        // ----- helper: check if canvas is fully covered (pixel coverage) -----
+        function isCanvasCovered() {
+            // sample pixels at grid points (fast approximation)
+            const step = 70; // check every 70px (about 50x35 samples)
+            const w = CANVAS_W, h = CANVAS_H;
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const data = imageData.data;
+            let nonBgPixels = 0;
+            let totalSamples = 0;
+            for (let y = 0; y < h; y += step) {
+                for (let x = 0; x < w; x += step) {
+                    const idx = (y * w + x) * 4;
+                    const r = data[idx];
+                    const g = data[idx + 1];
+                    const b = data[idx + 2];
+                    // background colour #B5B5B5 → rgb(181,181,181)
+                    if (!(r === 181 && g === 181 && b === 181)) {
+                        nonBgPixels++;
+                    }
+                    totalSamples++;
+                }
+            }
+            const coverage = nonBgPixels / totalSamples;
+            console.log('coverage:', coverage);
+            return coverage >= 0.98;   // nearly full
+        }
+
+        // ----- stop animation, freeze zoomed image, store final for panning -----
+        function freezeAndZoom() {
+            if (!active) return;
+            active = false;
+            covered = true;
+            if (animFrame) {
+                cancelAnimationFrame(animFrame);
+                animFrame = null;
+            }
+            // capture current canvas as image (collage final)
+            const offscreen = new OffscreenCanvas(CANVAS_W, CANVAS_H);
+            const offCtx = offscreen.getContext('2d');
+            offCtx.drawImage(canvas, 0, 0);
+            // store as ImageBitmap for smooth panning
+            createImageBitmap(offscreen).then(bitmap => {
+                freezeImg = bitmap;
+                // reset offset to centre of image (shows centre region zoomed)
+                offsetX = (CANVAS_W / 2) - (CANVAS_W / (2 * ZOOM_FACTOR));
+                offsetY = (CANVAS_H / 2) - (CANVAS_H / (2 * ZOOM_FACTOR));
+                drawZoomedPan();
+                statusEl.innerHTML = '<span>🔍 frozen · drag to explore</span>';
+            });
+        }
+
+        // draw zoomed region based on offset (source rectangle)
+        function drawZoomedPan() {
+            if (!freezeImg) return;
+            ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+            // source rect dimensions (width/height in source image)
+            const srcW = CANVAS_W / ZOOM_FACTOR;
+            const srcH = CANVAS_H / ZOOM_FACTOR;
+            // clamp offset so source rect stays inside image
+            const maxOffsetX = CANVAS_W - srcW;
+            const maxOffsetY = CANVAS_H - srcH;
+            let clampedX = Math.min(maxOffsetX, Math.max(0, offsetX));
+            let clampedY = Math.min(maxOffsetY, Math.max(0, offsetY));
+            offsetX = clampedX;
+            offsetY = clampedY;
+
+            ctx.drawImage(
+                freezeImg,
+                clampedX, clampedY, srcW, srcH,   // source rect
+                0, 0, CANVAS_W, CANVAS_H          // dest full canvas (zoom)
+            );
+        }
+
+        // ----- animation step (similar to py5 draw) -----
+        function drawStep() {
+            if (!active) return;
+
+            // pick random image from our preloaded list
+            const img = imageSources[Math.floor(Math.random() * imageSources.length)];
+            // random parameters matching py5 style
+            const rx = Math.random() * 4000 - 500;            // -500..3500
+            const ry = Math.random() * 2980 - 500;            // -500..2480
+            const rw = Math.random() * 1000;                  // 0..1000
+            const rh = Math.random() * 1000;                  // 0..1000
+            const srcX = Math.floor(Math.random() * 5000) + 1;      // 1..5000
+            const srcY = Math.floor(Math.random() * 5000) + 1;      // 1..5000
+            const srcX2 = Math.floor(Math.random() * 5000) + 5000;  // 5000..10000
+            const srcY2 = Math.floor(Math.random() * 5000) + 5000;  // 5000..10000
+
+            // draw image using those sub-rect coordinates
+            // note: py5 random_int(1,5000) may be larger than image itself – emulate
+            // We'll clamp source rect to image dimensions.
+            const imgW = img.width;
+            const imgH = img.height;
+            const sX = Math.min(imgW-1, srcX % imgW);
+            const sY = Math.min(imgH-1, srcY % imgH);
+            const sX2 = Math.min(imgW, (srcX2 % imgW) + 10); // just to get variable rect
+            const sY2 = Math.min(imgH, (srcY2 % imgH) + 10);
+            // ensure width positive
+            const sw = Math.max(10, Math.abs(sX2 - sX));
+            const sh = Math.max(10, Math.abs(sY2 - sY));
+
+            try {
+                ctx.drawImage(img, sX, sY, sw, sh, rx, ry, rw, rh);
+            } catch (e) {
+                // fallback: draw whole image with random scale
+                ctx.drawImage(img, rx, ry, rw, rh);
+            }
+
+            // check if canvas is covered
+            if (isCanvasCovered()) {
+                freezeAndZoom();
+                return;
+            }
+
+            // continue animation
+            animFrame = requestAnimationFrame(drawStep);
+        }
+
+        // ----- reset canvas to blank grey (like py5 background) -----
+        function resetCanvas() {
+            ctx.fillStyle = '#B5B5B5';
+            ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+            freezeImg = null;
+            covered = false;
+            offsetX = 0; offsetY = 0;
+        }
+
+        // ----- start animation (play) -----
+        function startAnimation() {
+            if (active) return;
+            resetCanvas();                     // fresh grey slate
+            active = true;
+            covered = false;
+            freezeImg = null;
+            statusEl.innerHTML = '<span>▶ animating</span> · covering canvas...';
+            if (animFrame) cancelAnimationFrame(animFrame);
+            animFrame = requestAnimationFrame(drawStep);
+        }
+
+        // ----- mouse panning (only when frozen & zoomed) -----
+        function handleMouseDown(e) {
+            if (!freezeImg || covered === false) return;  // only when frozen
+            isPanning = true;
+            canvas.classList.add('panning');
+            const rect = canvas.getBoundingClientRect();
+            // scale mouse to canvas coordinates (3500x2480)
+            const scaleX = CANVAS_W / rect.width;
+            const scaleY = CANVAS_H / rect.height;
+            startPanX = (e.clientX - rect.left) * scaleX;
+            startPanY = (e.clientY - rect.top) * scaleY;
+            // store current offset as reference
+            startPanX -= offsetX;
+            startPanY -= offsetY;
+        }
+
+        function handleMouseMove(e) {
+            if (!isPanning || !freezeImg) return;
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = CANVAS_W / rect.width;
+            const scaleY = CANVAS_H / rect.height;
+            const currentX = (e.clientX - rect.left) * scaleX;
+            const currentY = (e.clientY - rect.top) * scaleY;
+
+            // new offset = current mouse - start offset (which stored relative)
+            offsetX = currentX - startPanX;
+            offsetY = currentY - startPanY;
+
+            drawZoomedPan();
+        }
+
+        function handleMouseUp(e) {
+            isPanning = false;
+            canvas.classList.remove('panning');
+        }
+
+        function handleMouseLeave(e) {
+            if (isPanning) {
+                isPanning = false;
+                canvas.classList.remove('panning');
+            }
+        }
+
+        // ----- attach events for panning -----
+        canvas.addEventListener('mousedown', handleMouseDown);
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        canvas.addEventListener('mouseleave', handleMouseLeave);
+
+        // disable context menu on canvas
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        // play button
+        playBtn.addEventListener('click', () => {
+            startAnimation();
+        });
+
+        // initial blank canvas
+        resetCanvas();
+
+        // optional: resize observer to keep visual crisp (but we use fixed CSS)
+    })();
+</script>
+</body>
+</html>
