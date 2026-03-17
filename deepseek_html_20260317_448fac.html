@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>collage · fullscreen edge to edge + inverted</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            background: black;
+            min-height: 100vh;
+            overflow: hidden;   /* kill all scrollbars */
+            font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        /* splash screen – centered button */
+        #splash {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #121212;
+            z-index: 100;
+            transition: opacity 0.28s ease;
+        }
+        #splash.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .play-button {
+            background: #3b3b3b;
+            border: none;
+            color: white;
+            font-size: 3.5rem;
+            padding: 1.2rem 5rem;
+            border-radius: 6rem;
+            font-weight: 700;
+            letter-spacing: 3px;
+            box-shadow: 0 12px 0 #1b1b1b, 0 14px 30px black;
+            cursor: pointer;
+            transition: 0.08s linear;
+            border: 2px solid #8a8a8a;
+        }
+        .play-button:hover {
+            background: #525252;
+            transform: translateY(-4px);
+            box-shadow: 0 16px 0 #1b1b1b, 0 20px 30px black;
+        }
+        .play-button:active {
+            transform: translateY(6px);
+            box-shadow: 0 6px 0 #1b1b1b, 0 12px 25px black;
+        }
+
+        /* canvas wrapper fills screen exactly – NO margins */
+        #canvasWrapper {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: black;         /* letterbox colour (barely visible because we stretch) */
+            z-index: 10;
+        }
+
+        /* canvas – stretched to exact screen size, ignoring aspect ratio.
+           That removes all margins. The 3500x2480 content will be squished/stretched,
+           but since we only pan after freeze (zoomed), distortion is acceptable.
+           And during animation it also fills edge to edge.
+        */
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            object-fit: fill;          /* force canvas to exactly fill screen → no margins */
+            background-color: #B5B5B5;
+            cursor: grab;
+        }
+        canvas.panning {
+            cursor: grabbing;
+        }
+
+        /* minimal status overlay – still visible */
+        #miniStatus {
+            position: fixed;
+            bottom: 18px;
+            right: 24px;
+            background: rgba(20,20,20,0.7);
+            backdrop-filter: blur(3px);
+            color: #ccc;
+            padding: 0.5rem 1.2rem;
+            border-radius: 40px;
+            font-size: 0.9rem;
+            border: 1px solid #4a4a4a;
+            z-index: 200;
+            pointer-events: none;
+            letter-spacing: 0.5px;
+        }
+        #miniStatus span {
+            color: #e0b48c;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <!-- splash button (centered) -->
+    <div id="splash">
+        <button class="play-button" id="playBtn">▶ PLAY</button>
+    </div>
+
+    <!-- canvas wrapper – fills entire viewport -->
+    <div id="canvasWrapper">
+        <canvas id="mainCanvas" width="3500" height="2480"></canvas>
+    </div>
+
+    <!-- tiny status (always on top) -->
+    <div id="miniStatus"><span>⚫ idle</span> · click play</div>
+
+    <script>
+        (function() {
+            // --- fixed dimensions (original py5) ---
+            const CANVAS_W = 3500;
+            const CANVAS_H = 2480;
+
+            // --- elements ---
+            const splash = document.getElementById('splash');
+            const playBtn = document.getElementById('playBtn');
+            const canvas = document.getElementById('mainCanvas');
+            const ctx = canvas.getContext('2d');
+            const statusEl = document.getElementById('miniStatus');
+
+            // --- preload 7 pattern images (simulate your jpegs) ---
+            const imageCount = 7;
+            const imageSources = [];
+
+            function generatePatternImages() {
+                const palette = [
+                    ['#3a5f7a', '#d9b48f', '#5f3d2b'],
+                    ['#6a4c45', '#b58b6b', '#2d4d4a'],
+                    ['#887845', '#453f2c', '#b46745'],
+                    ['#3e5a4a', '#ac9e8d', '#25413b'],
+                    ['#5f4c5b', '#c09b7d', '#384e4e'],
+                    ['#2b5e6b', '#d4aa7a', '#40544b'],
+                    ['#764b3e', '#b69274', '#264a4f']
+                ];
+                for (let idx = 0; idx < imageCount; idx++) {
+                    const offCanvas = document.createElement('canvas');
+                    offCanvas.width = 500 + idx * 70;
+                    offCanvas.height = 400 + idx * 50;
+                    const offCtx = offCanvas.getContext('2d');
+                    const col = palette[idx % palette.length];
+
+                    offCtx.fillStyle = col[0];
+                    offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+
+                    for (let s = 0; s < 14; s++) {
+                        offCtx.fillStyle = col[Math.floor(Math.random() * col.length)];
+                        offCtx.beginPath();
+                        const x = Math.random() * offCanvas.width;
+                        const y = Math.random() * offCanvas.height;
+                        const w = 25 + Math.random() * 140;
+                        const h = 25 + Math.random() * 140;
+                        offCtx.fillRect(x, y, w, h);
+                    }
+                    offCtx.font = 'bold 60px "Courier New"';
+                    offCtx.fillStyle = '#ffffff40';
+                    offCtx.fillText('📷', 20, 140);
+                    offCtx.fillStyle = '#00000030';
+                    offCtx.font = '40px monospace';
+                    offCtx.fillText(`#${idx+1}`, 40, 280);
+                    imageSources.push(offCanvas);
+                }
+            }
+            generatePatternImages();
+
+            // --- state ---
+            let animFrame = null;
+            let active = false;
+            let covered = false;
+            let freezeImg = null;          // final collage as ImageBitmap
+
+            // --- inverted pan state ---
+            let isPanning = false;
+            let startPanX = 0, startPanY = 0;   // canvas cursor pos at drag start (canvas coords)
+            let offsetX = 0, offsetY = 0;        // source view origin (in canvas pixels)
+            const ZOOM = 2.2;                     // zoom factor
+
+            // ----- coverage check (fast approx) -----
+            function isCanvasCovered() {
+                const step = 70;
+                const w = CANVAS_W, h = CANVAS_H;
+                const imageData = ctx.getImageData(0, 0, w, h);
+                const data = imageData.data;
+                let nonBg = 0;
+                let total = 0;
+                for (let y = 0; y < h; y += step) {
+                    for (let x = 0; x < w; x += step) {
+                        const idx = (y * w + x) * 4;
+                        const r = data[idx];
+                        const g = data[idx + 1];
+                        const b = data[idx + 2];
+                        if (!(r === 181 && g === 181 && b === 181)) nonBg++;
+                        total++;
+                    }
+                }
+                return (nonBg / total) >= 0.98;
+            }
+
+            // ----- freeze & store final image, enter explore mode -----
+            async function freezeAndZoom() {
+                if (!active) return;
+                active = false;
+                covered = true;
+                if (animFrame) {
+                    cancelAnimationFrame(animFrame);
+                    animFrame = null;
+                }
+
+                // capture final canvas
+                const offscreen = new OffscreenCanvas(CANVAS_W, CANVAS_H);
+                const offCtx = offscreen.getContext('2d');
+                offCtx.drawImage(canvas, 0, 0);
+                freezeImg = await createImageBitmap(offscreen);
+
+                // centre zoom view
+                offsetX = (CANVAS_W / 2) - (CANVAS_W / (2 * ZOOM));
+                offsetY = (CANVAS_H / 2) - (CANVAS_H / (2 * ZOOM));
+                drawZoomedPan();
+                statusEl.innerHTML = '<span>🔍 explore</span> · inverted drag';
+            }
+
+            // draw zoomed region using current offset
+            function drawZoomedPan() {
+                if (!freezeImg) return;
+                ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                const srcW = CANVAS_W / ZOOM;
+                const srcH = CANVAS_H / ZOOM;
+                const maxX = CANVAS_W - srcW;
+                const maxY = CANVAS_H - srcH;
+                let clampedX = Math.min(maxX, Math.max(0, offsetX));
+                let clampedY = Math.min(maxY, Math.max(0, offsetY));
+                offsetX = clampedX;
+                offsetY = clampedY;
+
+                ctx.drawImage(
+                    freezeImg,
+                    clampedX, clampedY, srcW, srcH,
+                    0, 0, CANVAS_W, CANVAS_H
+                );
+            }
+
+            // ----- animation step (draw one random tile) -----
+            function drawStep() {
+                if (!active) return;
+
+                const img = imageSources[Math.floor(Math.random() * imageSources.length)];
+                const rx = Math.random() * 4000 - 500;
+                const ry = Math.random() * 2980 - 500;
+                const rw = Math.random() * 1000;
+                const rh = Math.random() * 1000;
+                const srcX = Math.floor(Math.random() * 5000) + 1;
+                const srcY = Math.floor(Math.random() * 5000) + 1;
+                const srcX2 = Math.floor(Math.random() * 5000) + 5000;
+                const srcY2 = Math.floor(Math.random() * 5000) + 5000;
+
+                const imgW = img.width;
+                const imgH = img.height;
+                const sX = Math.min(imgW-1, srcX % imgW);
+                const sY = Math.min(imgH-1, srcY % imgH);
+                const sX2 = Math.min(imgW, (srcX2 % imgW) + 10);
+                const sY2 = Math.min(imgH, (srcY2 % imgH) + 10);
+                const sw = Math.max(10, Math.abs(sX2 - sX));
+                const sh = Math.max(10, Math.abs(sY2 - sY));
+
+                try {
+                    ctx.drawImage(img, sX, sY, sw, sh, rx, ry, rw, rh);
+                } catch {
+                    ctx.drawImage(img, rx, ry, rw, rh);
+                }
+
+                if (isCanvasCovered()) {
+                    freezeAndZoom();
+                    return;
+                }
+
+                animFrame = requestAnimationFrame(drawStep);
+            }
+
+            // ----- reset canvas to grey -----
+            function resetCanvas() {
+                ctx.fillStyle = '#B5B5B5';
+                ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                freezeImg = null;
+                covered = false;
+                offsetX = 0; offsetY = 0;
+            }
+
+            // ----- start animation + hide splash (button disappears) -----
+            function startAnimation() {
+                splash.classList.add('hidden');   // button + overlay gone
+                resetCanvas();
+                active = true;
+                covered = false;
+                freezeImg = null;
+                statusEl.innerHTML = '<span>▶ animating</span> · covering canvas';
+
+                if (animFrame) cancelAnimationFrame(animFrame);
+                animFrame = requestAnimationFrame(drawStep);
+            }
+
+            // ------ inverted mouse panning (cursor moves opposite) ------
+            function handleMouseDown(e) {
+                if (!freezeImg || !covered) return;
+                isPanning = true;
+                canvas.classList.add('panning');
+
+                const rect = canvas.getBoundingClientRect();
+                // map mouse to canvas coordinates (3500x2480) – even if canvas is stretched,
+                // we rely on canvas pixel coords. getBoundingClientRect gives screen size,
+                // but we need to scale proportionally.
+                const scaleX = CANVAS_W / rect.width;   // canvas logical width / screen width
+                const scaleY = CANVAS_H / rect.height;
+                const mouseCanvasX = (e.clientX - rect.left) * scaleX;
+                const mouseCanvasY = (e.clientY - rect.top) * scaleY;
+
+                startPanX = mouseCanvasX;
+                startPanY = mouseCanvasY;
+                // keep existing offset
+            }
+
+            function handleMouseMove(e) {
+                if (!isPanning || !freezeImg) return;
+                e.preventDefault();
+
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = CANVAS_W / rect.width;
+                const scaleY = CANVAS_H / rect.height;
+                const currentX = (e.clientX - rect.left) * scaleX;
+                const currentY = (e.clientY - rect.top) * scaleY;
+
+                // INVERTED: delta = current - start ; we subtract from offset
+                const deltaX = currentX - startPanX;
+                const deltaY = currentY - startPanY;
+
+                offsetX -= deltaX;
+                offsetY -= deltaY;
+
+                // update start for continuous flow
+                startPanX = currentX;
+                startPanY = currentY;
+
+                drawZoomedPan();
+            }
+
+            function handleMouseUp() {
+                isPanning = false;
+                canvas.classList.remove('panning');
+            }
+
+            function handleMouseLeave() {
+                if (isPanning) {
+                    isPanning = false;
+                    canvas.classList.remove('panning');
+                }
+            }
+
+            // ----- event binding -----
+            canvas.addEventListener('mousedown', handleMouseDown);
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+            canvas.addEventListener('mouseleave', handleMouseLeave);
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            // play button click
+            playBtn.addEventListener('click', () => {
+                startAnimation();
+            });
+
+            // initial blank
+            resetCanvas();
+        })();
+    </script>
+</body>
+</html>
