@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>коллаж · постоянный зум + русский</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            background: #2a2a2a;
+            min-height: 100vh;
+            overflow: hidden;
+            font-family: 'Helvetica', system-ui, Roboto, sans-serif;
+        }
+
+        /* заставка с кнопкой по центру */
+        #splash {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #B5B5B5;
+            z-index: 100;
+            transition: opacity 0.28s ease;
+        }
+        #splash.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .play-button {
+            background: #c6c6c6;
+            border: none;
+            color: black;
+            font-size: 2.5rem;
+            padding: 0.8rem 4rem;
+            border-radius: 3rem;
+            font-weight: 800;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: 0.08s linear;
+        }
+        .play-button:hover {
+            background: #9e9e9e;
+        }
+        .play-button:active {
+            transform: translateY(6px);
+            box-shadow: 0 6px 0 #1b1b1b, 0 12px 25px black;
+        }
+
+        /* контейнер для canvas на весь экран */
+        #canvasWrapper {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: black;
+            z-index: 10;
+        }
+
+        /* canvas растянут точно по размерам экрана */
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            object-fit: fill;
+            background-color: #B5B5B5;
+            cursor: grab;
+        }
+        canvas.panning {
+            cursor: grabbing;
+        }
+
+        /* индикатор загрузки */
+        #loadingIndicator {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 50px;
+            font-size: 1.5rem;
+            z-index: 200;
+            display: none;
+            pointer-events: none;
+        }
+        #loadingIndicator.visible {
+            display: block;
+        }
+
+        /* статус скрыт (полностью) */
+        #miniStatus {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- индикатор загрузки -->
+    <div id="loadingIndicator">⏳ загрузка изображений...</div>
+
+    <!-- затемнение с кнопкой по центру -->
+    <div id="splash">
+        <button class="play-button" id="playBtn"> запустить</button>
+    </div>
+
+    <!-- обёртка для canvas -->
+    <div id="canvasWrapper">
+        <canvas id="mainCanvas" width="3500" height="2480"></canvas>
+    </div>
+
+    <!-- скрытый статус -->
+    <div id="miniStatus"></div>
+
+    <script>
+        (function() {
+            // --- РАЗМЕРЫ ПОЛОТНА ---
+            const CANVAS_W = 3500;
+            const CANVAS_H = 2480;
+
+            // --- элементы ---
+            const splash = document.getElementById('splash');
+            const playBtn = document.getElementById('playBtn');
+            const canvas = document.getElementById('mainCanvas');
+            const ctx = canvas.getContext('2d');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+
+            // --- ВАШИ ИЗОБРАЖЕНИЯ (те же имена файлов) ---
+            const imageFiles = [
+                '26rn260.jpg',
+                '32rn291 copy.jpg', 
+                '32rn292.jpg',
+                '33rn300-01.jpg',
+                '39rn330.jpg',
+                '40rn334-01.jpg',
+                '73rn-01 copy.jpg'
+            ];
+
+            // --- состояние ---
+            let animFrame = null;
+            let active = false;
+            let covered = false;
+            let freezeImg = null;
+            let imagesLoaded = false;
+            let imageSources = []; // здесь будут храниться загруженные изображения
+
+            // --- параметры панорамирования с ПОСТОЯННЫМ ЗУМОМ 2.2 ---
+            let isPanning = false;
+            let startPanX = 0, startPanY = 0;
+            let offsetX = 0, offsetY = 0;
+            const ZOOM = 2.2;
+
+            // ----- ФУНКЦИЯ ЗАГРУЗКИ ИЗОБРАЖЕНИЙ -----
+            async function loadImages() {
+                loadingIndicator.classList.add('visible');
+                imageSources = [];
+                
+                const loadPromises = imageFiles.map((filename, index) => {
+                    return new Promise((resolve, reject) => {
+                        const img = new Image();
+                        
+                        // ВАЖНО: изображения должны лежать в той же папке, что и HTML файл
+                        // Если они в подпапке, укажите путь, например: 'images/' + filename
+                        img.src = filename;
+                        
+                        img.onload = () => {
+                            console.log(`✅ Загружено: ${filename} (${img.width}x${img.height})`);
+                            
+                            // Создаем canvas из изображения для удобства работы
+                            const offCanvas = document.createElement('canvas');
+                            offCanvas.width = img.width;
+                            offCanvas.height = img.height;
+                            const offCtx = offCanvas.getContext('2d');
+                            offCtx.drawImage(img, 0, 0);
+                            
+                            imageSources[index] = offCanvas;
+                            resolve();
+                        };
+                        
+                        img.onerror = () => {
+                            console.error(`❌ Ошибка загрузки: ${filename}`);
+                            
+                            // Создаем заглушку на случай ошибки (чтобы код продолжил работу)
+                            const offCanvas = document.createElement('canvas');
+                            offCanvas.width = 300;
+                            offCanvas.height = 200;
+                            const offCtx = offCanvas.getContext('2d');
+                            offCtx.fillStyle = '#FF0000';
+                            offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+                            offCtx.font = 'bold 24px "Courier New"';
+                            offCtx.fillStyle = '#FFFFFF';
+                            offCtx.fillText('ошибка', 20, 60);
+                            offCtx.fillText(filename.substring(0, 8), 20, 100);
+                            
+                            imageSources[index] = offCanvas;
+                            resolve(); // не reject, чтобы продолжить загрузку остальных
+                        };
+                    });
+                });
+                
+                try {
+                    await Promise.all(loadPromises);
+                    imagesLoaded = true;
+                    console.log('🎉 Все изображения загружены!');
+                } catch (error) {
+                    console.error('Ошибка при загрузке:', error);
+                } finally {
+                    loadingIndicator.classList.remove('visible');
+                }
+            }
+
+            // ----- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: преобразование координат мыши в канвас-координаты -----
+            function getCanvasCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = CANVAS_W / rect.width;
+                const scaleY = CANVAS_H / rect.height;
+                return {
+                    x: (e.clientX - rect.left) * scaleX,
+                    y: (e.clientY - rect.top) * scaleY
+                };
+            }
+
+            // ----- ФУНКЦИЯ РИСОВАНИЯ С УЧЁТОМ ПОСТОЯННОГО ЗУМА -----
+            function drawZoomed(sourceImage = null) {
+                if (!freezeImg) {
+                    const currentImageData = ctx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = CANVAS_W;
+                    tempCanvas.height = CANVAS_H;
+                    tempCanvas.getContext('2d').putImageData(currentImageData, 0, 0);
+                    
+                    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                    
+                    const srcW = CANVAS_W / ZOOM;
+                    const srcH = CANVAS_H / ZOOM;
+                    const maxX = CANVAS_W - srcW;
+                    const maxY = CANVAS_H - srcH;
+                    let clampedX = Math.min(maxX, Math.max(0, offsetX));
+                    let clampedY = Math.min(maxY, Math.max(0, offsetY));
+                    offsetX = clampedX;
+                    offsetY = clampedY;
+
+                    ctx.drawImage(
+                        tempCanvas,
+                        clampedX, clampedY, srcW, srcH,
+                        0, 0, CANVAS_W, CANVAS_H
+                    );
+                } else {
+                    const srcW = CANVAS_W / ZOOM;
+                    const srcH = CANVAS_H / ZOOM;
+                    const maxX = CANVAS_W - srcW;
+                    const maxY = CANVAS_H - srcH;
+                    let clampedX = Math.min(maxX, Math.max(0, offsetX));
+                    let clampedY = Math.min(maxY, Math.max(0, offsetY));
+                    offsetX = clampedX;
+                    offsetY = clampedY;
+
+                    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                    ctx.drawImage(
+                        freezeImg,
+                        clampedX, clampedY, srcW, srcH,
+                        0, 0, CANVAS_W, CANVAS_H
+                    );
+                }
+            }
+
+            // ----- ПРОВЕРКА ПОКРЫТИЯ -----
+            function isCanvasCovered() {
+                const step = 70;
+                const w = CANVAS_W, h = CANVAS_H;
+                const imageData = ctx.getImageData(0, 0, w, h);
+                const data = imageData.data;
+                let nonBg = 0;
+                let total = 0;
+                
+                for (let y = 0; y < h; y += step) {
+                    for (let x = 0; x < w; x += step) {
+                        const idx = (y * w + x) * 4;
+                        const r = data[idx];
+                        const g = data[idx + 1];
+                        const b = data[idx + 2];
+                        if (!(Math.abs(r - 181) < 15 && Math.abs(g - 181) < 15 && Math.abs(b - 181) < 15)) {
+                            nonBg++;
+                        }
+                        total++;
+                    }
+                }
+                return (nonBg / total) >= 0.98;
+            }
+
+            // ----- ЗАМОРОЗКА И СОХРАНЕНИЕ ФИНАЛЬНОГО ИЗОБРАЖЕНИЯ -----
+            async function freezeAndZoom() {
+                if (!active) return;
+                active = false;
+                covered = true;
+                if (animFrame) {
+                    cancelAnimationFrame(animFrame);
+                    animFrame = null;
+                }
+
+                const offscreen = new OffscreenCanvas(CANVAS_W, CANVAS_H);
+                const offCtx = offscreen.getContext('2d');
+                offCtx.drawImage(canvas, 0, 0);
+                freezeImg = await createImageBitmap(offscreen);
+
+                offsetX = (CANVAS_W / 2) - (CANVAS_W / (2 * ZOOM));
+                offsetY = (CANVAS_H / 2) - (CANVAS_H / (2 * ZOOM));
+                drawZoomed(freezeImg);
+            }
+
+            // ----- ШАГ АНИМАЦИИ -----
+            function drawStep() {
+                if (!active || !imagesLoaded || imageSources.length === 0) return;
+
+                const img = imageSources[Math.floor(Math.random() * imageSources.length)];
+                
+                const rx = Math.random() * 4000 - 500;
+                const ry = Math.random() * 2980 - 500;
+                const rw = Math.random() * 1000;
+                const rh = Math.random() * 1000;
+                
+                const srcX = Math.floor(Math.random() * 5000) + 1;
+                const srcY = Math.floor(Math.random() * 5000) + 1;
+                const srcX2 = Math.floor(Math.random() * 5000) + 5000;
+                const srcY2 = Math.floor(Math.random() * 5000) + 5000;
+
+                const imgW = img.width;
+                const imgH = img.height;
+                
+                const sX = srcX % imgW;
+                const sY = srcY % imgH;
+                const sX2 = srcX2 % imgW;
+                const sY2 = srcY2 % imgH;
+                
+                const sw = Math.max(10, Math.abs(sX2 - sX));
+                const sh = Math.max(10, Math.abs(sY2 - sY));
+
+                ctx.drawImage(img, sX, sY, sw, sh, rx, ry, rw, rh);
+
+                const currentState = new OffscreenCanvas(CANVAS_W, CANVAS_H);
+                const stateCtx = currentState.getContext('2d');
+                stateCtx.drawImage(canvas, 0, 0);
+                
+                ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                const srcW = CANVAS_W / ZOOM;
+                const srcH = CANVAS_H / ZOOM;
+                const maxX = CANVAS_W - srcW;
+                const maxY = CANVAS_H - srcH;
+                let clampedX = Math.min(maxX, Math.max(0, offsetX));
+                let clampedY = Math.min(maxY, Math.max(0, offsetY));
+                offsetX = clampedX;
+                offsetY = clampedY;
+
+                ctx.drawImage(
+                    currentState,
+                    clampedX, clampedY, srcW, srcH,
+                    0, 0, CANVAS_W, CANVAS_H
+                );
+
+                if (isCanvasCovered()) {
+                    freezeAndZoom();
+                    return;
+                }
+
+                animFrame = requestAnimationFrame(drawStep);
+            }
+
+            // ----- СБРОС КАНВАСА -----
+            function resetCanvas() {
+                ctx.fillStyle = '#B5B5B5';
+                ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                freezeImg = null;
+                covered = false;
+                offsetX = (CANVAS_W / 2) - (CANVAS_W / (2 * ZOOM));
+                offsetY = (CANVAS_H / 2) - (CANVAS_H / (2 * ZOOM));
+            }
+
+            // ----- ЗАПУСК АНИМАЦИИ -----
+            function startAnimation() {
+                if (!imagesLoaded) {
+                    alert('Изображения ещё не загрузились. Пожалуйста, подождите.');
+                    return;
+                }
+                splash.classList.add('hidden');
+                resetCanvas();
+                active = true;
+                covered = false;
+                freezeImg = null;
+
+                if (animFrame) cancelAnimationFrame(animFrame);
+                animFrame = requestAnimationFrame(drawStep);
+            }
+
+            // ----- ИНВЕРТИРОВАННОЕ ПАНОРАМИРОВАНИЕ -----
+            function handleMouseDown(e) {
+                if (!freezeImg || !covered) return;
+                isPanning = true;
+                canvas.classList.add('panning');
+
+                const coords = getCanvasCoords(e);
+                startPanX = coords.x;
+                startPanY = coords.y;
+            }
+
+            function handleMouseMove(e) {
+                if (!isPanning || !freezeImg) return;
+                e.preventDefault();
+
+                const coords = getCanvasCoords(e);
+                
+                const deltaX = coords.x - startPanX;
+                const deltaY = coords.y - startPanY;
+
+                offsetX -= deltaX;
+                offsetY -= deltaY;
+
+                startPanX = coords.x;
+                startPanY = coords.y;
+
+                drawZoomed(freezeImg);
+            }
+
+            function handleMouseUp() {
+                isPanning = false;
+                canvas.classList.remove('panning');
+            }
+
+            function handleMouseLeave() {
+                if (isPanning) {
+                    isPanning = false;
+                    canvas.classList.remove('panning');
+                }
+            }
+
+            // ----- ПОДПИСКА НА СОБЫТИЯ -----
+            canvas.addEventListener('mousedown', handleMouseDown);
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+            canvas.addEventListener('mouseleave', handleMouseLeave);
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            // Кнопка запуска
+            playBtn.addEventListener('click', () => {
+                startAnimation();
+            });
+
+            // Начальная загрузка изображений
+            loadImages();
+            
+            // Начальный сброс
+            resetCanvas();
+        })();
+    </script>
+</body>
+</html>
