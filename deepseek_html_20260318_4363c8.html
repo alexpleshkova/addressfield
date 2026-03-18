@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>коллаж · постоянный зум + русский</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            background: black;
+            min-height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, Roboto, sans-serif;
+        }
+
+        /* заставка с кнопкой по центру */
+        #splash {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #121212;
+            z-index: 100;
+            transition: opacity 0.28s ease;
+        }
+        #splash.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .play-button {
+            background: #3b3b3b;
+            border: none;
+            color: white;
+            font-size: 3.5rem;
+            padding: 1.2rem 5rem;
+            border-radius: 6rem;
+            font-weight: 700;
+            letter-spacing: 3px;
+            box-shadow: 0 12px 0 #1b1b1b, 0 14px 30px black;
+            cursor: pointer;
+            transition: 0.08s linear;
+            border: 2px solid #8a8a8a;
+        }
+        .play-button:hover {
+            background: #525252;
+            transform: translateY(-4px);
+            box-shadow: 0 16px 0 #1b1b1b, 0 20px 30px black;
+        }
+        .play-button:active {
+            transform: translateY(6px);
+            box-shadow: 0 6px 0 #1b1b1b, 0 12px 25px black;
+        }
+
+        /* контейнер для canvas на весь экран */
+        #canvasWrapper {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: black;
+            z-index: 10;
+        }
+
+        /* canvas растянут точно по размерам экрана */
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            object-fit: fill;
+            background-color: #B5B5B5;
+            cursor: grab;
+        }
+        canvas.panning {
+            cursor: grabbing;
+        }
+
+        /* статус скрыт (полностью) */
+        #miniStatus {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- затемнение с кнопкой по центру (русский язык) -->
+    <div id="splash">
+        <button class="play-button" id="playBtn">▶ ЗАПУСТИТЬ</button>
+    </div>
+
+    <!-- обёртка для canvas -->
+    <div id="canvasWrapper">
+        <canvas id="mainCanvas" width="3500" height="2480"></canvas>
+    </div>
+
+    <!-- скрытый статус (не используется) -->
+    <div id="miniStatus"></div>
+
+    <script>
+        (function() {
+            // --- РАЗМЕРЫ ПОЛОТНА (точно как в Python) ---
+            const CANVAS_W = 3500;
+            const CANVAS_H = 2480;
+
+            // --- элементы ---
+            const splash = document.getElementById('splash');
+            const playBtn = document.getElementById('playBtn');
+            const canvas = document.getElementById('mainCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // --- ПЛЕЙСХОЛДЕРЫ ДЛЯ ИЗОБРАЖЕНИЙ (вы подключите свои через GitHub) ---
+            // 7 пустых заглушек с именами как в оригинальном Python-коде
+            const imageFiles = [
+                '26rn260.jpg',
+                '32rn291.jpg', 
+                '32rn292.jpg',
+                '33rn300-01.jpg',
+                '39rn330.jpg',
+                '40rn334-01.jpg',
+                '73rn-02.jpg'
+            ];
+            
+            // Создаём временные заглушки (простые цветные прямоугольники с подписями)
+            // Позже вы замените их реальными изображениями через GitHub
+            const imageSources = [];
+            
+            function createPlaceholders() {
+                const colors = [
+                    '#8B4513', '#2F4F4F', '#4A4A4A', '#556B2F', '#483D8B', '#8B5A2B', '#2E8B57'
+                ];
+                
+                for (let idx = 0; idx < imageFiles.length; idx++) {
+                    const offCanvas = document.createElement('canvas');
+                    // Случайные размеры, но в пределах разумного (как в оригинале)
+                    offCanvas.width = 200 + idx * 40;
+                    offCanvas.height = 180 + idx * 35;
+                    const offCtx = offCanvas.getContext('2d');
+                    
+                    // Заливка цветом
+                    offCtx.fillStyle = colors[idx];
+                    offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+                    
+                    // Текст с именем файла (для идентификации)
+                    offCtx.font = 'bold 24px "Courier New"';
+                    offCtx.fillStyle = '#ffffff';
+                    offCtx.fillText(imageFiles[idx].substring(0, 8), 20, 60);
+                    
+                    // Добавляем немного текстуры
+                    for (let i = 0; i < 10; i++) {
+                        offCtx.fillStyle = `rgba(255,255,255,${Math.random()*0.3})`;
+                        offCtx.fillRect(
+                            Math.random() * offCanvas.width,
+                            Math.random() * offCanvas.height,
+                            20, 20
+                        );
+                    }
+                    
+                    imageSources.push(offCanvas);
+                    console.log(`Плейсхолдер ${imageFiles[idx]}: ${offCanvas.width}x${offCanvas.height}`);
+                }
+            }
+            
+            createPlaceholders();
+
+            // --- состояние ---
+            let animFrame = null;
+            let active = false;
+            let covered = false;
+            let freezeImg = null;
+
+            // --- параметры панорамирования с ПОСТОЯННЫМ ЗУМОМ 2.2 ---
+            let isPanning = false;
+            let startPanX = 0, startPanY = 0;
+            let offsetX = 0, offsetY = 0;
+            const ZOOM = 2.2; // Увеличение активно ВСЕГДА (и во время анимации, и после)
+
+            // ----- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: преобразование координат мыши в канвас-координаты -----
+            function getCanvasCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = CANVAS_W / rect.width;
+                const scaleY = CANVAS_H / rect.height;
+                return {
+                    x: (e.clientX - rect.left) * scaleX,
+                    y: (e.clientY - rect.top) * scaleY
+                };
+            }
+
+            // ----- ФУНКЦИЯ РИСОВАНИЯ С УЧЁТОМ ПОСТОЯННОГО ЗУМА -----
+            function drawZoomed(sourceImage = null) {
+                // Если есть замороженное изображение, используем его, иначе рисуем текущее содержимое canvas
+                const img = sourceImage || canvas;
+                
+                // Сохраняем текущее содержимое, если нет замороженного изображения
+                if (!freezeImg) {
+                    // При активной анимации просто очищаем и рисуем с зумом текущее состояние
+                    // Но текущее состояние уже нарисовано в canvas, поэтому нам нужно 
+                    // скопировать его и отрисовать с зумом
+                    const currentImageData = ctx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = CANVAS_W;
+                    tempCanvas.height = CANVAS_H;
+                    tempCanvas.getContext('2d').putImageData(currentImageData, 0, 0);
+                    
+                    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                    
+                    const srcW = CANVAS_W / ZOOM;
+                    const srcH = CANVAS_H / ZOOM;
+                    const maxX = CANVAS_W - srcW;
+                    const maxY = CANVAS_H - srcH;
+                    let clampedX = Math.min(maxX, Math.max(0, offsetX));
+                    let clampedY = Math.min(maxY, Math.max(0, offsetY));
+                    offsetX = clampedX;
+                    offsetY = clampedY;
+
+                    ctx.drawImage(
+                        tempCanvas,
+                        clampedX, clampedY, srcW, srcH,
+                        0, 0, CANVAS_W, CANVAS_H
+                    );
+                } else {
+                    // Рисуем замороженное изображение с зумом
+                    const srcW = CANVAS_W / ZOOM;
+                    const srcH = CANVAS_H / ZOOM;
+                    const maxX = CANVAS_W - srcW;
+                    const maxY = CANVAS_H - srcH;
+                    let clampedX = Math.min(maxX, Math.max(0, offsetX));
+                    let clampedY = Math.min(maxY, Math.max(0, offsetY));
+                    offsetX = clampedX;
+                    offsetY = clampedY;
+
+                    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                    ctx.drawImage(
+                        freezeImg,
+                        clampedX, clampedY, srcW, srcH,
+                        0, 0, CANVAS_W, CANVAS_H
+                    );
+                }
+            }
+
+            // ----- ПРОВЕРКА ПОКРЫТИЯ (как в Python) -----
+            function isCanvasCovered() {
+                const step = 70;
+                const w = CANVAS_W, h = CANVAS_H;
+                const imageData = ctx.getImageData(0, 0, w, h);
+                const data = imageData.data;
+                let nonBg = 0;
+                let total = 0;
+                
+                for (let y = 0; y < h; y += step) {
+                    for (let x = 0; x < w; x += step) {
+                        const idx = (y * w + x) * 4;
+                        const r = data[idx];
+                        const g = data[idx + 1];
+                        const b = data[idx + 2];
+                        // фон #B5B5B5 (181,181,181) с допуском
+                        if (!(Math.abs(r - 181) < 15 && Math.abs(g - 181) < 15 && Math.abs(b - 181) < 15)) {
+                            nonBg++;
+                        }
+                        total++;
+                    }
+                }
+                return (nonBg / total) >= 0.98;
+            }
+
+            // ----- ЗАМОРОЗКА И СОХРАНЕНИЕ ФИНАЛЬНОГО ИЗОБРАЖЕНИЯ -----
+            async function freezeAndZoom() {
+                if (!active) return;
+                active = false;
+                covered = true;
+                if (animFrame) {
+                    cancelAnimationFrame(animFrame);
+                    animFrame = null;
+                }
+
+                // Сохраняем финальное состояние
+                const offscreen = new OffscreenCanvas(CANVAS_W, CANVAS_H);
+                const offCtx = offscreen.getContext('2d');
+                offCtx.drawImage(canvas, 0, 0);
+                freezeImg = await createImageBitmap(offscreen);
+
+                // Центрируем вид
+                offsetX = (CANVAS_W / 2) - (CANVAS_W / (2 * ZOOM));
+                offsetY = (CANVAS_H / 2) - (CANVAS_H / (2 * ZOOM));
+                drawZoomed(freezeImg);
+            }
+
+            // ----- ШАГ АНИМАЦИИ (ТОЧНО КАК В PYTHON) -----
+            function drawStep() {
+                if (!active) return;
+
+                // Выбираем случайное изображение
+                const img = imageSources[Math.floor(Math.random() * imageSources.length)];
+                
+                // Случайные координаты как в py5
+                const rx = Math.random() * 4000 - 500;        // -500..3500
+                const ry = Math.random() * 2980 - 500;        // -500..2480
+                const rw = Math.random() * 1000;               // 0..1000
+                const rh = Math.random() * 1000;               // 0..1000
+                
+                // Случайные исходные координаты (py5.random_int)
+                const srcX = Math.floor(Math.random() * 5000) + 1;
+                const srcY = Math.floor(Math.random() * 5000) + 1;
+                const srcX2 = Math.floor(Math.random() * 5000) + 5000;
+                const srcY2 = Math.floor(Math.random() * 5000) + 5000;
+
+                const imgW = img.width;
+                const imgH = img.height;
+                
+                // Нормализуем координаты, чтобы они были в пределах изображения
+                const sX = srcX % imgW;
+                const sY = srcY % imgH;
+                const sX2 = srcX2 % imgW;
+                const sY2 = srcY2 % imgH;
+                
+                // Убеждаемся, что ширина и высота положительные
+                const sw = Math.max(10, Math.abs(sX2 - sX));
+                const sh = Math.max(10, Math.abs(sY2 - sY));
+
+                // Рисуем фрагмент изображения
+                ctx.drawImage(img, sX, sY, sw, sh, rx, ry, rw, rh);
+
+                // Применяем постоянный зум к текущему состоянию
+                // Сохраняем нарисованное, затем перерисовываем с зумом
+                const currentState = new OffscreenCanvas(CANVAS_W, CANVAS_H);
+                const stateCtx = currentState.getContext('2d');
+                stateCtx.drawImage(canvas, 0, 0);
+                
+                // Применяем зум
+                ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                const srcW = CANVAS_W / ZOOM;
+                const srcH = CANVAS_H / ZOOM;
+                const maxX = CANVAS_W - srcW;
+                const maxY = CANVAS_H - srcH;
+                let clampedX = Math.min(maxX, Math.max(0, offsetX));
+                let clampedY = Math.min(maxY, Math.max(0, offsetY));
+                offsetX = clampedX;
+                offsetY = clampedY;
+
+                ctx.drawImage(
+                    currentState,
+                    clampedX, clampedY, srcW, srcH,
+                    0, 0, CANVAS_W, CANVAS_H
+                );
+
+                // Проверяем покрытие
+                if (isCanvasCovered()) {
+                    freezeAndZoom();
+                    return;
+                }
+
+                animFrame = requestAnimationFrame(drawStep);
+            }
+
+            // ----- СБРОС КАНВАСА (серый фон) -----
+            function resetCanvas() {
+                ctx.fillStyle = '#B5B5B5';
+                ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                freezeImg = null;
+                covered = false;
+                // Центрируем вид при старте (зум с самого начала)
+                offsetX = (CANVAS_W / 2) - (CANVAS_W / (2 * ZOOM));
+                offsetY = (CANVAS_H / 2) - (CANVAS_H / (2 * ZOOM));
+            }
+
+            // ----- ЗАПУСК АНИМАЦИИ -----
+            function startAnimation() {
+                splash.classList.add('hidden');
+                resetCanvas();
+                active = true;
+                covered = false;
+                freezeImg = null;
+
+                if (animFrame) cancelAnimationFrame(animFrame);
+                animFrame = requestAnimationFrame(drawStep);
+            }
+
+            // ----- ИНВЕРТИРОВАННОЕ ПАНОРАМИРОВАНИЕ (как и просили) -----
+            function handleMouseDown(e) {
+                if (!freezeImg || !covered) return;
+                isPanning = true;
+                canvas.classList.add('panning');
+
+                const coords = getCanvasCoords(e);
+                startPanX = coords.x;
+                startPanY = coords.y;
+            }
+
+            function handleMouseMove(e) {
+                if (!isPanning || !freezeImg) return;
+                e.preventDefault();
+
+                const coords = getCanvasCoords(e);
+                
+                // ИНВЕРТИРОВАННОЕ ДВИЖЕНИЕ: вычитаем дельту
+                const deltaX = coords.x - startPanX;
+                const deltaY = coords.y - startPanY;
+
+                offsetX -= deltaX;
+                offsetY -= deltaY;
+
+                startPanX = coords.x;
+                startPanY = coords.y;
+
+                drawZoomed(freezeImg);
+            }
+
+            function handleMouseUp() {
+                isPanning = false;
+                canvas.classList.remove('panning');
+            }
+
+            function handleMouseLeave() {
+                if (isPanning) {
+                    isPanning = false;
+                    canvas.classList.remove('panning');
+                }
+            }
+
+            // ----- ПОДПИСКА НА СОБЫТИЯ -----
+            canvas.addEventListener('mousedown', handleMouseDown);
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+            canvas.addEventListener('mouseleave', handleMouseLeave);
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            // Кнопка запуска
+            playBtn.addEventListener('click', () => {
+                startAnimation();
+            });
+
+            // Начальный сброс
+            resetCanvas();
+        })();
+    </script>
+</body>
+</html>
