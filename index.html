@@ -240,23 +240,26 @@
                 ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
 
                 // Проверяем, заполнен ли холст
-                if (isCanvasFullyCovered()) {
-                    console.log('🎯 Холст заполнен, останавливаем анимацию');
-                    stopAnimation();
-                    return;
+                if (Math.random() < 0.1) {
+                    if (isCanvasFullyCovered()) {
+                        console.log('🎯 Холст заполнен, останавливаем анимацию');
+                        stopAnimation();
+                        return;
+                    }
                 }
+            
 
                 animationFrame = requestAnimationFrame(animationStep);
             }
 
             // ----- ПРОВЕРКА ЗАПОЛНЕНИЯ ХОЛСТА -----
             function isCanvasFullyCovered() {
-                const step = 70;
+                const step = 100; //было 70
                 const imageData = ctx.getImageData(0, 0, CANVAS_W, CANVAS_H);
                 const data = imageData.data;
                 
-                let nonBg = 0;
-                let total = 0;
+                let bgPixels = 0//nonBg = 0; 
+                let totalSamples = 0//total = 0;
                 
                 for (let y = 0; y < CANVAS_H; y += step) {
                     for (let x = 0; x < CANVAS_W; x += step) {
@@ -266,14 +269,17 @@
                         const b = data[idx + 2];
                         
                         // Проверяем, не серый ли это фон (с допуском)
-                        if (Math.abs(r - 181) > 20 || Math.abs(g - 181) > 20 || Math.abs(b - 181) > 20) {
-                            nonBg++;
+                        if (Math.abs(r - 181) < 30 && Math.abs(g - 181) < 30 && Math.abs(b - 181) < 30 {
+                            bgPixels++;
+                        /*if (Math.abs(r - 181) > 20 || Math.abs(g - 181) > 20 || Math.abs(b - 181) > 20) {
+                            nonBg++;*/
                         }
-                        total++;
+                        totalSamples++; //total++;
                     }
                 }
-                
-                return (nonBg / total) >= 0.95;
+                const bgRatio = bgPixels / totalSamples;
+                console.log('Фон остался:', Math.round(bgRatio * 100) + '%');
+                return bgRatio < 0.05; //(nonBg / total) >= 0.95;
             }
 
             // ----- ОСТАНОВКА АНИМАЦИИ И ЗАМОРОЗКА -----
