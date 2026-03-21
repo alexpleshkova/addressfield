@@ -116,7 +116,8 @@
                 '33rn300-01.jpg',
                 '39rn330.jpg',
                 '40rn334-01.jpg',
-                '73rn-01-copy.jpg'
+                '73rn-01-copy.jpg',
+                '73rn-02 copy.jpg'
             ];
 
             let images = [];
@@ -263,7 +264,7 @@
                 loadingIndicator.textContent = `загружено: ${coverage.toFixed(1)}%`;
                 
                 // Останавливаем при достижении 99.5%
-                if (coverage >= 99.5) {
+                if (coverage >= 99.0) {
                     console.log(` Достигнуто ${coverage.toFixed(1)}% заполнения! Останавливаем анимацию.`);
                     stopAnimation();
                     return;
@@ -280,7 +281,7 @@
                     animationFrame = null;
                 }
                 
-                console.log('Сохранение финального коллажа...');
+                console.log('Сохранение результата...');
                 loadingIndicator.textContent = 'сохранение...';
                 
                 // Сохраняем полный коллаж
