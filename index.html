@@ -88,7 +88,7 @@
     </style>
 </head>
 <body>
-    <div id="loadingIndicator">⏳ загрузка...</div>
+    <div id="loadingIndicator">загрузка...</div>
 
     <div id="splash">
         <button class="play-button" id="playBtn"> запустить</button>
@@ -294,7 +294,7 @@
                 viewY = 0;
                 
                 drawCurrentView();
-                loadingIndicator.textContent = '🔍 99.5%! Двигайте курсором (инвертировано)';
+                loadingIndicator.textContent = 'двигайте экран, чтобы увидеть целиком';
                 loadingIndicator.style.color = '#0f0';
                 loadingIndicator.style.background = 'rgba(0,0,0,0.8)';
                 
@@ -302,7 +302,7 @@
                     loadingIndicator.style.opacity = '0.6';
                 }, 4000);
                 
-                console.log('✅ Готово! Холст заполнен на 99.5%. Двигайте мышью с зажатой кнопкой');
+                console.log('Готово! Двигайте мышью с зажатой кнопкой, чтобы увидеть целиком');
             }
             
             // ----- ПАНОРАМИРОВАНИЕ (инвертированное) -----
@@ -361,7 +361,7 @@
             
             // ----- ЗАПУСК АНИМАЦИИ -----
             function startAnimation() {
-                console.log('🚀 ЗАПУСК АНИМАЦИИ');
+                console.log('ЗАПУСК АНИМАЦИИ');
                 splash.classList.add('hidden');
                 
                 // Очищаем холст (серый фон)
@@ -373,7 +373,7 @@
                 viewX = 0;
                 viewY = 0;
                 
-                loadingIndicator.textContent = 'создание коллажа... 0%';
+                loadingIndicator.textContent = 'загрузка... 0%';
                 loadingIndicator.style.color = '#ff0';
                 loadingIndicator.style.opacity = '1';
                 
