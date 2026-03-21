@@ -326,7 +326,7 @@
                 viewY = 0;
                 
                 drawCurrentView();
-                loadingIndicator.textContent = '🔍 можно двигать курсором';
+                loadingIndicator.textContent = 'для передвижения двигайте экран';
                 setTimeout(() => {
                     if (loadingIndicator) loadingIndicator.style.opacity = '0.5';
                 }, 3000);
@@ -401,7 +401,7 @@
                 viewX = 0;
                 viewY = 0;
                 
-                loadingIndicator.textContent = '🎨 создание коллажа...';
+                loadingIndicator.textContent = 'загрузка';
                 loadingIndicator.style.opacity = '1';
                 
                 if (animationFrame) cancelAnimationFrame(animationFrame);
