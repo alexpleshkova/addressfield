@@ -113,6 +113,8 @@
             const ctx = canvas.getContext('2d');
             const loadingIndicator = document.getElementById('loadingIndicator');
 
+            const IMAGE_PATH = '';
+            
             const imageFiles = [
                 '26rn260.jpg',
                 '32rn291-copy.jpg', 
@@ -188,7 +190,7 @@
                         }
                     };
                     
-                    img.src = filename + '?t=' + Date.now();
+                    img.src = IMAGE_PATH + filename + '?t=' + Date.now();
                 });
             }
             
