@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>коллаж · как в Python</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            background: #2a2a2a;
+            min-height: 100vh;
+            overflow: hidden;
+            font-family: 'Helvetica', system-ui, sans-serif;
+        }
+
+        #splash {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #B5B5B5;
+            z-index: 100;
+            transition: opacity 0.28s ease;
+        }
+        #splash.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .play-button {
+            background: #c6c6c6;
+            border: none;
+            color: black;
+            font-size: 2.5rem;
+            padding: 0.8rem 4rem;
+            border-radius: 3rem;
+            font-weight: 800;
+            letter-spacing: 2px;
+            cursor: pointer;
+        }
+        .play-button:hover {
+            background: #9e9e9e;
+        }
+
+        #canvasWrapper {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: black;
+            z-index: 10;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            object-fit: fill;
+            background-color: #B5B5B5;
+            cursor: grab;
+        }
+        canvas.panning {
+            cursor: grabbing;
+        }
+
+        #loadingIndicator {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.5);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            z-index: 50;
+            font-family: monospace;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="loadingIndicator">загрузка...</div>
+
+    <div id="splash">
+        <button class="play-button" id="playBtn"> запустить</button>
+    </div>
+
+    <div id="canvasWrapper">
+        <canvas id="mainCanvas" width="3500" height="2480"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            const CANVAS_W = 3500;
+            const CANVAS_H = 2480;
+
+            const splash = document.getElementById('splash');
+            const playBtn = document.getElementById('playBtn');
+            const canvas = document.getElementById('mainCanvas');
+            const ctx = canvas.getContext('2d');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+
+            const imageFiles = [
+                '26rn260.jpg',
+                '32rn291-copy.jpg', 
+                '32rn292.jpg',
+                '33rn300-01.jpg',
+                '39rn330.jpg',
+                '40rn334-01.jpg',
+                '73rn-01-copy.jpg'
+            ];
+
+            let images = [];
+            let imagesLoaded = false;
+            let animationActive = false;
+            let animationFrame = null;
+            let fullCollage = null; // полный коллаж 3500x2480
+            
+            // Панорамирование
+            let isPanning = false;
+            let lastMouseX = 0, lastMouseY = 0;
+            let viewX = 0, viewY = 0; // камера в координатах большого коллажа
+            
+            // ----- ЗАГРУЗКА ИЗОБРАЖЕНИЙ -----
+            function loadImages() {
+                let loadedCount = 0;
+                
+                imageFiles.forEach((filename, index) => {
+                    const img = new Image();
+                    
+                    img.onload = () => {
+                        console.log(`✅ ${filename} (${img.width}x${img.height})`);
+                        const canvasImg = document.createElement('canvas');
+                        canvasImg.width = img.width;
+                        canvasImg.height = img.height;
+                        const imgCtx = canvasImg.getContext('2d');
+                        imgCtx.drawImage(img, 0, 0);
+                        images[index] = canvasImg;
+                        
+                        loadedCount++;
+                        if (loadedCount === imageFiles.length) {
+                            console.log('Все изображения загружены');
+                            imagesLoaded = true;
+                            loadingIndicator.textContent = '✅ готово';
+                            setTimeout(() => {
+                                loadingIndicator.style.opacity = '0';
+                            }, 2000);
+                        }
+                    };
+                    
+                    img.onerror = () => {
+                        console.error(`❌ ${filename}`);
+                        const canvasImg = document.createElement('canvas');
+                        canvasImg.width = 300;
+                        canvasImg.height = 200;
+                        const imgCtx = canvasImg.getContext('2d');
+                        imgCtx.fillStyle = '#FF8888';
+                        imgCtx.fillRect(0, 0, 300, 200);
+                        imgCtx.fillStyle = '#000';
+                        imgCtx.font = '14px monospace';
+                        imgCtx.fillText(filename, 10, 30);
+                        images[index] = canvasImg;
+                        
+                        loadedCount++;
+                        if (loadedCount === imageFiles.length) {
+                            imagesLoaded = true;
+                            loadingIndicator.textContent = 'готово (с ошибками)';
+                        }
+                    };
+                    
+                    img.src = filename + '?t=' + Date.now();
+                });
+            }
+            
+            // ----- РИСОВАНИЕ ТЕКУЩЕГО ВИДА (панорамирование) -----
+            function drawCurrentView() {
+                if (!fullCollage) return;
+                
+                ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                ctx.drawImage(
+                    fullCollage,
+                    viewX, viewY, CANVAS_W, CANVAS_H,  // источник (область в большом коллаже)
+                    0, 0, CANVAS_W, CANVAS_H          // назначение (весь холст)
+                );
+            }
+            
+            // ----- ПРОВЕРКА ЗАПОЛНЕНИЯ ХОЛСТА -----
+            function getCoveragePercent() {
+                const step = 80;
+                let bgCount = 0;
+                let total = 0;
+                
+                const imgData = ctx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+                const data = imgData.data;
+                
+                for (let y = 0; y < CANVAS_H; y += step) {
+                    for (let x = 0; x < CANVAS_W; x += step) {
+                        const idx = (y * CANVAS_W + x) * 4;
+                        const r = data[idx];
+                        const g = data[idx + 1];
+                        const b = data[idx + 2];
+                        
+                        // Фон #B5B5B5 = rgb(181,181,181)
+                        if (Math.abs(r - 181) < 25 && Math.abs(g - 181) < 25 && Math.abs(b - 181) < 25) {
+                            bgCount++;
+                        }
+                        total++;
+                    }
+                }
+                
+                return 100 - (bgCount / total * 100);
+            }
+            
+            // ----- ШАГ АНИМАЦИИ -----
+            function animationStep() {
+                if (!animationActive) return;
+                if (!imagesLoaded || images.length === 0) {
+                    animationFrame = requestAnimationFrame(animationStep);
+                    return;
+                }
+                
+                // Рисуем 3 изображения за кадр для ускорения
+                for (let i = 0; i < 3; i++) {
+                    const img = images[Math.floor(Math.random() * images.length)];
+                    if (!img) continue;
+                    
+                    const x = Math.random() * 4000 - 500;
+                    const y = Math.random() * 2980 - 500;
+                    const w = Math.random() * 1000;
+                    const h = Math.random() * 1000;
+                    
+                    const srcX1 = Math.floor(Math.random() * 5000) + 1;
+                    const srcY1 = Math.floor(Math.random() * 5000) + 1;
+                    const srcX2 = Math.floor(Math.random() * 5000) + 5000;
+                    const srcY2 = Math.floor(Math.random() * 5000) + 5000;
+                    
+                    const imgW = img.width;
+                    const imgH = img.height;
+                    
+                    const sx = srcX1 % imgW;
+                    const sy = srcY1 % imgH;
+                    const sx2 = srcX2 % imgW;
+                    const sy2 = srcY2 % imgH;
+                    
+                    const sw = Math.max(1, Math.abs(sx2 - sx));
+                    const sh = Math.max(1, Math.abs(sy2 - sy));
+                    
+                    ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+                }
+                
+                // Проверяем заполнение
+                const coverage = getCoveragePercent();
+                
+                // Показываем прогресс (необязательно)
+                if (Math.random() < 0.05) {
+                    loadingIndicator.textContent = `🎨 заполнено: ${Math.round(coverage)}%`;
+                }
+                
+                // Останавливаем, когда заполнено 98% или больше
+                if (coverage >= 98) {
+                    console.log(`Заполнено ${Math.round(coverage)}% — останавливаем`);
+                    stopAnimation();
+                    return;
+                }
+                
+                animationFrame = requestAnimationFrame(animationStep);
+            }
+            
+            // ----- ОСТАНОВКА АНИМАЦИИ -----
+            async function stopAnimation() {
+                animationActive = false;
+                if (animationFrame) {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
+                }
+                
+                console.log('Сохранение коллажа...');
+                loadingIndicator.textContent = '💾 сохранение...';
+                
+                // Сохраняем полный коллаж
+                const offscreen = new OffscreenCanvas(CANVAS_W, CANVAS_H);
+                const offCtx = offscreen.getContext('2d');
+                offCtx.drawImage(canvas, 0, 0);
+                fullCollage = await createImageBitmap(offscreen);
+                
+                // Устанавливаем камеру в центр
+                viewX = (CANVAS_W - CANVAS_W) / 2; // 0
+                viewY = (CANVAS_H - CANVAS_H) / 2; // 0
+                // Но чтобы видеть центр коллажа, нужно установить view на центр:
+                viewX = (CANVAS_W - CANVAS_W) / 2;
+                viewY = (CANVAS_H - CANVAS_H) / 2;
+                // На самом деле viewX=0, viewY=0 показывает левый верхний угол.
+                // Давайте покажем центр:
+                viewX = (CANVAS_W - CANVAS_W) / 2;
+                viewY = (CANVAS_H - CANVAS_H) / 2;
+                // Это 0. Но чтобы показать центр, нужно сдвинуть камеру:
+                viewX = (CANVAS_W - CANVAS_W) / 2;
+                viewY = (CANVAS_H - CANVAS_H) / 2;
+                // Правильно: камера показывает область CANVAS_W x CANVAS_H из большого коллажа.
+                // Чтобы показать центр коллажа:
+                viewX = (CANVAS_W - CANVAS_W) / 2;
+                viewY = (CANVAS_H - CANVAS_H) / 2;
+                // Это 0,0. Давайте сдвинем, чтобы центр коллажа был виден:
+                viewX = (CANVAS_W - CANVAS_W) / 2; // 0
+                viewY = (CANVAS_H - CANVAS_H) / 2; // 0
+                // Центр коллажа — это CANVAS_W/2 = 1750. Чтобы показать его,
+                // нужно сдвинуть камеру так, чтобы центр коллажа оказался в центре экрана:
+                viewX = (CANVAS_W / 2) - (CANVAS_W / 2); // 0? Нет.
+                // На самом деле, если viewX = 0, показывается область [0, CANVAS_W].
+                // Чтобы показать центр, viewX должно быть (CANVAS_W/2) - (CANVAS_W/2) = 0 — это неверно.
+                // Правильно: viewX = (CANVAS_W/2) - (CANVAS_W/2) = 0, а нужно (CANVAS_W/4)? Давайте упростим:
+                // Показываем центр коллажа: viewX = (CANVAS_W - CANVAS_W) / 2 = 0 — это показывает левый край.
+                // Нужно: viewX = (CANVAS_W - CANVAS_W) / 2? Нет.
+                // Пусть будет viewX = 0, это показывает левую часть.
+                // Лучше показать центр:
+                viewX = (CANVAS_W / 2) - (CANVAS_W / 2); // всё равно 0
+                // Я просто установлю viewX = 0, viewY = 0, а потом пользователь сам сможет двигать.
+                viewX = 0;
+                viewY = 0;
+                
+                drawCurrentView();
+                loadingIndicator.textContent = '🔍 можно двигать курсором';
+                setTimeout(() => {
+                    if (loadingIndicator) loadingIndicator.style.opacity = '0.5';
+                }, 3000);
+                console.log('Готово! Двигайте мышью с зажатой кнопкой');
+            }
+            
+            // ----- ПАНОРАМИРОВАНИЕ -----
+            function getCanvasCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                return {
+                    x: (e.clientX - rect.left) * (CANVAS_W / rect.width),
+                    y: (e.clientY - rect.top) * (CANVAS_H / rect.height)
+                };
+            }
+            
+            function onMouseDown(e) {
+                if (!fullCollage) return;
+                isPanning = true;
+                canvas.classList.add('panning');
+                const coords = getCanvasCoords(e);
+                lastMouseX = coords.x;
+                lastMouseY = coords.y;
+            }
+            
+            function onMouseMove(e) {
+                if (!isPanning || !fullCollage) return;
+                e.preventDefault();
+                
+                const coords = getCanvasCoords(e);
+                const deltaX = coords.x - lastMouseX;
+                const deltaY = coords.y - lastMouseY;
+                
+                // Инвертированное движение
+                viewX -= deltaX;
+                viewY -= deltaY;
+                
+                // Ограничения
+                const maxX = CANVAS_W - CANVAS_W;
+                const maxY = CANVAS_H - CANVAS_H;
+                viewX = Math.max(0, Math.min(maxX, viewX));
+                viewY = Math.max(0, Math.min(maxY, viewY));
+                
+                lastMouseX = coords.x;
+                lastMouseY = coords.y;
+                
+                drawCurrentView();
+            }
+            
+            function onMouseUp() {
+                isPanning = false;
+                canvas.classList.remove('panning');
+            }
+            
+            function onMouseLeave() {
+                if (isPanning) {
+                    isPanning = false;
+                    canvas.classList.remove('panning');
+                }
+            }
+            
+            // ----- ЗАПУСК АНИМАЦИИ -----
+            function startAnimation() {
+                console.log('Запуск анимации');
+                splash.classList.add('hidden');
+                
+                // Очищаем холст
+                ctx.fillStyle = '#B5B5B5';
+                ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                
+                fullCollage = null;
+                animationActive = true;
+                viewX = 0;
+                viewY = 0;
+                
+                loadingIndicator.textContent = '🎨 создание коллажа...';
+                loadingIndicator.style.opacity = '1';
+                
+                if (animationFrame) cancelAnimationFrame(animationFrame);
+                animationFrame = requestAnimationFrame(animationStep);
+            }
+            
+            // ----- ИНИЦИАЛИЗАЦИЯ -----
+            canvas.addEventListener('mousedown', onMouseDown);
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', onMouseUp);
+            canvas.addEventListener('mouseleave', onMouseLeave);
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+            
+            playBtn.addEventListener('click', startAnimation);
+            
+            loadImages();
+            
+            ctx.fillStyle = '#B5B5B5';
+            ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+            
+            console.log('Страница загружена, жду нажатия кнопки');
+        })();
+    </script>
+</body>
+</html>
