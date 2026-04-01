@@ -375,6 +375,20 @@
             function startAnimation() {
                 console.log('ЗАПУСК АНИМАЦИИ');
                 splash.classList.add('hidden');
+                if (!imagesLoaded || images.length === 0) {
+                    console.log('Images not loaded yet, waiting...');
+                    loadingIndicator.textContent = 'загрузка изображений...';
+        // Wait for images to load
+                    const checkInterval = setInterval(() => {
+                        if (imagesLoaded && images.length > 0) {
+                            clearInterval(checkInterval);
+                            startAnimation(); // Retry
+                        }
+                    }, 100);
+                    return;
+                }   
+    
+    splash.classList.add('hidden');
                 
                 ctx.fillStyle = '#B5B5B5';
                 ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
@@ -401,11 +415,14 @@
             
             //playBtn.addEventListener('click', startAnimation);
             const handleStart = (e) => {
-                e.preventDefault();
+                //e.preventDefault();
+                if (e.type === 'touchstart') {
+                    e.preventDefault();
+                }
                 startAnimation();
             };
             playBtn.addEventListener('click', handleStart);
-            playBtn.addEventListener('touchstart', handleStart);
+           playBtn.addEventListener('touchstart', handleStart, { passive: false });
 
             
             loadImages();
