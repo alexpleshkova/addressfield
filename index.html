@@ -399,7 +399,14 @@
             canvas.addEventListener('pointerleave', onPointerUp);
             canvas.addEventListener('contextmenu', (e) => e.preventDefault());
             
-            playBtn.addEventListener('click', startAnimation);
+            //playBtn.addEventListener('click', startAnimation);
+            const handleStart = (e) => {
+                e.preventDefault();
+                startAnimation();
+            };
+            playBtn.addEventListener('click', handleStart);
+            playBtn.addEventListener('touchstart', handleStart);
+
             
             loadImages();
             
