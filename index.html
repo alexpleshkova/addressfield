@@ -45,7 +45,6 @@
             font-weight: 800;
             letter-spacing: 2px;
             cursor: pointer;
-            /* улучшаем кликабельность на тач-устройствах */
             touch-action: manipulation;
             position: relative;
             z-index: 101;
@@ -71,7 +70,7 @@
             object-fit: fill;
             background-color: #B5B5B5;
             cursor: grab;
-            touch-action: none; /* критически важно для iOS, чтобы touchmove не вызывал панорамирование браузера */
+            touch-action: none; 
         }
         canvas.panning {
             cursor: grabbing;
@@ -152,7 +151,7 @@
             const maxViewXLimit = CANVAS_W - viewW;
             const maxViewYLimit = CANVAS_H - viewH;
             
-            // ----- FIX 4: Улучшенная загрузка изображений с прогрессом, таймаутами и повторными попытками -----
+            // ----- Улучшенная загрузка изображений с прогрессом, таймаутами и повторными попытками -----
             function loadImageWithRetry(filename, index, retryCount = 0) {
                 return new Promise((resolve, reject) => {
                     const img = new Image();
@@ -265,11 +264,11 @@
                     for (let y = 0; y < CANVAS_H; y += step) {
                         for (let x = 0; x < CANVAS_W; x += step) {
                             const idx = (y * CANVAS_W + x) * 4;
-                            /* Проверка на выход за границы (на всякий случай)
+                            // Проверка на выход за границы (на всякий случай)
                             if (idx + 2 >= data.length) continue;
                             const r = data[idx];
                             const g = data[idx + 1];
-                            const b = data[idx + 2];*/
+                            const b = data[idx + 2];
                             
                             // Фон #B5B5B5 (RGB 181,181,181) с допуском
                             if (Math.abs(r - 181) < 20 && Math.abs(g - 181) < 20 && Math.abs(b - 181) < 20) {
@@ -312,8 +311,8 @@
                     // и не ждать вечность. При этом не перегружаем рендеринг.
                     const w = Math.random() * 4000 - 500; //700 + 200;  // 200-900px
                     const h = Math.random() * 2980 - 500; //700 + 200;
-                    const x = Math.random() * 1000; //(CANVAS_W + 400) - 200;
-                    const y = Math.random() * 1000; //(CANVAS_H + 400) - 200;
+                    const x = Math.random() * (CANVAS_W - w);//1000; //(CANVAS_W + 400) - 200;
+                    const y = Math.random() * (CANVAS_H - h);//1000; //(CANVAS_H + 400) - 200;
                     
                     // Случайные координаты источника с большим разнообразием
                     const imgW = img.width;
