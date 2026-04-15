@@ -564,11 +564,24 @@
                 startAnimation();
             };
             
+            // FIX: Удаляем старые обработчики и добавляем новые с корректными параметрами
+            // Сначала удаляем возможные старые (если есть)
+            playBtn.removeEventListener('click', handleStart);
+            playBtn.removeEventListener('touchstart', handleStart);
+            
+            // Добавляем заново
             playBtn.addEventListener('click', handleStart);
             playBtn.addEventListener('touchstart', handleStart, { passive: false });
             
+            // FIX: Дополнительная гарантия - убеждаемся что кнопка не перекрыта
+            // и что splash не блокирует события
+            splash.style.pointerEvents = 'auto';
+            
             // Стартуем инициализацию
             init();
+
+            // Выводим в консоль для отладки
+            console.log('Страница загружена, кнопка активна');
         })();
     </script>
 </body>
