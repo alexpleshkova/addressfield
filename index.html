@@ -288,8 +288,8 @@
             }
             
             // ----- ШАГ АНИМАЦИИ (оптимизирован для мобильных) -----
-            // FIX 6: Уменьшаем количество вставок за кадр для более плавной работы на iPhone SE2
-            let lastTimestamp = 0;
+        
+            //let lastTimestamp = 0;
             function animationStep(timestamp) {
                 if (!animationActive) return;
                 if (!imagesLoaded || images.length === 0) {
@@ -315,23 +315,29 @@
                     const x = Math.random() * 1000; //(CANVAS_W + 400) - 200;
                     const y = Math.random() * 1000; //(CANVAS_H + 400) - 200;
                     
-                    /*/ Случайные координаты источника с большим разнообразием
+                    // Случайные координаты источника с большим разнообразием
                     const imgW = img.width;
                     const imgH = img.height;
-                    if (imgW === 0 || imgH === 0) continue;*/ 
+                    if (imgW === 0 || imgH === 0) continue;
                     
                     const srcX1 = Math.floor(Math.random() * 5000) + 1;
                     const srcY1 = Math.floor(Math.random() * 5000) + 1;
                     const srcX2 = Math.floor(Math.random() * 5000) + 5000;
                     const srcY2 = Math.floor(Math.random() * 5000) + 5000;
                     
-                    const imgW = img.width;
+                    /*const imgW = img.width;
                     const imgH = img.height;
                     
                     const sx = srcX1 % imgW;
                     const sy = srcY1 % imgH;
                     const sx2 = srcX2 % imgW;
-                    const sy2 = srcY2 % imgH;
+                    const sy2 = srcY2 % imgH;*/
+                    const srcX = Math.floor(Math.random() * Math.max(1, imgW - 50));
+                    const srcY = Math.floor(Math.random() * Math.max(1, imgH - 50));
+                    const srcW = Math.min(150 + Math.random() * 300, imgW - srcX);
+                    const srcH = Math.min(150 + Math.random() * 300, imgH - srcY);
+                    
+                    
                     //const srcX = Math.floor(Math.random() * Math.max(1, imgW - 50));
                     //const srcY = Math.floor(Math.random() * Math.max(1, imgH - 50));
                     //const srcW = Math.min(150 + Math.random() * 300, imgW - srcX);
@@ -553,29 +559,33 @@
             
             // Обработчик кнопки старта с защитой от двойного запуска
             let isStarting = false;
-            const handleStart = (e) => {
-                if (e.type === 'touchstart') {
+            function handleStart(e) {
+                if (e) {
                     e.preventDefault();
+                    e.stopPropagation();
                 }
                 if (isStarting) return;
                 isStarting = true;
-                // Небольшая задержка для предотвращения множественных вызовов
-                setTimeout(() => { isStarting = false; }, 500);
+                
+                console.log('Кнопка нажата!');
+                
+                setTimeout(() => { 
+                    isStarting = false; 
+                }, 1000);
+                
                 startAnimation();
-            };
+            }
+
+
             
-            // FIX: Удаляем старые обработчики и добавляем новые с корректными параметрами
-            // Сначала удаляем возможные старые (если есть)
-            playBtn.removeEventListener('click', handleStart);
-            playBtn.removeEventListener('touchstart', handleStart);
+            const newBtn = playBtn.cloneNode(true);
+            playBtn.parentNode.replaceChild(newBtn, playBtn);
+            const finalBtn = document.getElementById('playBtn');
             
-            // Добавляем заново
-            playBtn.addEventListener('click', handleStart);
-            playBtn.addEventListener('touchstart', handleStart, { passive: false });
+            finalBtn.addEventListener('click', handleStart);
+            finalBtn.addEventListener('touchstart', handleStart, { passive: false });
             
-            // FIX: Дополнительная гарантия - убеждаемся что кнопка не перекрыта
-            // и что splash не блокирует события
-            splash.style.pointerEvents = 'auto';
+            console.log('Страница загружена, кнопка активна');
             
             // Стартуем инициализацию
             init();
