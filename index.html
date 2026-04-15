@@ -47,6 +47,8 @@
             cursor: pointer;
             /* улучшаем кликабельность на тач-устройствах */
             touch-action: manipulation;
+            position: relative;
+            z-index: 101;
         }
         .play-button:hover {
             background: #9e9e9e;
@@ -552,16 +554,13 @@
             // Обработчик кнопки старта с защитой от двойного запуска
             let isStarting = false;
             const handleStart = (e) => {
-                if (e) {
+                if (e.type === 'touchstart') {
                     e.preventDefault();
-                    if (e.type === 'touchstart') {
-                        // для touch событий не нужно повторно preventDefault, но оставляем
-                    }
                 }
                 if (isStarting) return;
                 isStarting = true;
                 // Небольшая задержка для предотвращения множественных вызовов
-                setTimeout(() => { isStarting = false; }, 1000);
+                setTimeout(() => { isStarting = false; }, 500);
                 startAnimation();
             };
             
