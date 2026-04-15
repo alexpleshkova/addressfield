@@ -490,7 +490,6 @@
             }
             
             let isStarting = false;
-            
             function handleStart(e) {
                 if (e) {
                     e.preventDefault();
@@ -499,23 +498,24 @@
                 if (isStarting) return;
                 isStarting = true;
                 
-                console.log('Кнопка нажата! Запуск анимации...');
-                startAnimation();
+                console.log('Кнопка нажата!');
                 
                 setTimeout(() => { 
                     isStarting = false; 
                 }, 1000);
-            }
-            
-            if (playBtn) {
-                const newPlayBtn = playBtn.cloneNode(true);
-                playBtn.parentNode.replaceChild(newPlayBtn, playBtn);
-                playBtn = newPlayBtn;
                 
-                playBtn.addEventListener('click', handleStart);
-                playBtn.addEventListener('touchstart', handleStart, { passive: false });
-                console.log('Кнопка привязана');
+                startAnimation();
             }
+
+
+            
+            const newBtn = playBtn.cloneNode(true);
+            playBtn.parentNode.replaceChild(newBtn, playBtn);
+            const finalBtn = document.getElementById('playBtn');
+            
+            finalBtn.addEventListener('click', handleStart);
+            finalBtn.addEventListener('touchstart', handleStart, { passive: false });
+            
             
             init();
         })();
