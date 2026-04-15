@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <!-- FIX 1: Улучшенный viewport для iOS, запрещаем масштабирование двойным тапом, но разрешаем pinch для панорамирования -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>мейл-арт адресные листы</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'></text></svg>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            background: #2a2a2a;
+            min-height: 100vh;
+            overflow: hidden;
+            font-family: 'Helvetica', system-ui, sans-serif;
+            touch-action: none; /* предотвращает прокрутку страницы при панорамировании */
+        }
+
+        #splash {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #B5B5B5;
+            z-index: 100;
+            transition: opacity 0.28s ease;
+        }
+        #splash.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .play-button {
+            background: #c6c6c6;
+            border: none;
+            color: black;
+            font-size: 2.5rem;
+            padding: 0.8rem 4rem;
+            border-radius: 3rem;
+            font-weight: 800;
+            letter-spacing: 2px;
+            cursor: pointer;
+            /* улучшаем кликабельность на тач-устройствах */
+            touch-action: manipulation;
+        }
+        .play-button:hover {
+            background: #9e9e9e;
+        }
+
+        #canvasWrapper {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: black;
+            z-index: 10;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            object-fit: fill;
+            background-color: #B5B5B5;
+            cursor: grab;
+            touch-action: none; /* критически важно для iOS, чтобы touchmove не вызывал панорамирование браузера */
+        }
+        canvas.panning {
+            cursor: grabbing;
+        }
+
+        #loadingIndicator {
+            position: fixed;
+            bottom: 15px;
+            right: 15px;
+            background: rgba(0,0,0,0.75);
+            color: #0f0;
+            padding: 8px 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-family: monospace;
+            z-index: 50;
+            pointer-events: none;
+            font-weight: bold;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255,255,255,0.2);
+            transition: opacity 0.2s ease;
+        }
+    </style>
+</head>
+<body>
+    <div id="loadingIndicator">загрузка...</div>
+
+    <div id="splash">
+        <button class="play-button" id="playBtn"> запустить</button>
+    </div>
+
+    <div id="canvasWrapper">
+        <canvas id="mainCanvas" width="3500" height="2480"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            const CANVAS_W = 3500;
+            const CANVAS_H = 2480;
+            const ZOOM = 2.2;
+
+            const splash = document.getElementById('splash');
+            const playBtn = document.getElementById('playBtn');
+            const canvas = document.getElementById('mainCanvas');
+            const ctx = canvas.getContext('2d');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+
+            // ИСПРАВЛЕНИЕ 2: Добавляем прокси для России через cors-anywhere? 
+            // Проблема в России: некоторые CDN или GitHub Pages могут блокироваться, 
+            // но здесь файлы лежат в той же папке, что и HTML (на GitHub Pages).
+            // Однако на iPhone SE2 в России возможно медленное соединение или проблемы с DNS.
+            // Улучшаем загрузку: добавляем таймауты, повторные попытки и параллельную загрузку с прогрессом.
+            
+            const imageFiles = [
+                '26rn260.jpg',
+                '32rn291-copy.jpg', 
+                '32rn292.jpg',
+                '33rn300-01.jpg',
+                '39rn330.jpg',
+                '40rn334-01.jpg',
+                '73rn-01-copy.jpg',
+                '73rn-02-copy.jpg'
+            ];
+
+            let images = [];
+            let imagesLoaded = false;
+            let animationActive = false;
+            let animationFrame = null;
+            let fullCollage = null;
+            
+            // FIX 3: Переменные для отслеживания прогресса загрузки и повторных попыток
+            let totalLoadAttempts = 0;
+            let loadErrors = new Array(imageFiles.length).fill(false);
+            let loadRetryCount = new Array(imageFiles.length).fill(0);
+            const MAX_RETRIES = 2;
+            
+            // Панорамирование с зумом
+            let isPanning = false;
+            let lastX = 0, lastY = 0;
+            let viewX = 0, viewY = 0;
+            
+            const viewW = CANVAS_W / ZOOM;
+            const viewH = CANVAS_H / ZOOM;
+            const maxViewXLimit = CANVAS_W - viewW;
+            const maxViewYLimit = CANVAS_H - viewH;
+            
+            // ----- FIX 4: Улучшенная загрузка изображений с прогрессом, таймаутами и повторными попытками -----
+            function loadImageWithRetry(filename, index, retryCount = 0) {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    // Устанавливаем таймаут на загрузку (15 секунд на файл, т.к. в России может быть медленно)
+                    let timeoutId = setTimeout(() => {
+                        img.src = ''; // прерываем загрузку
+                        reject(new Error(`Timeout loading ${filename}`));
+                    }, 15000);
+                    
+                    img.onload = () => {
+                        clearTimeout(timeoutId);
+                        console.log(`✅ ${filename} (${img.width}x${img.height})`);
+                        // Кэшируем как canvas для быстрого доступа
+                        const canvasImg = document.createElement('canvas');
+                        canvasImg.width = img.width;
+                        canvasImg.height = img.height;
+                        const imgCtx = canvasImg.getContext('2d');
+                        imgCtx.drawImage(img, 0, 0);
+                        resolve(canvasImg);
+                    };
+                    
+                    img.onerror = () => {
+                        clearTimeout(timeoutId);
+                        console.error(`❌ ${filename} (попытка ${retryCount + 1})`);
+                        reject(new Error(`Failed to load ${filename}`));
+                    };
+                    
+                    // Добавляем случайный параметр, чтобы избежать кэширования проблемных ответов
+                    // Но основной параметр времени уже есть
+                    img.src = filename + '?t=' + Date.now() + '_retry_' + retryCount;
+                });
+            }
+            
+            async function loadAllImages() {
+                loadingIndicator.textContent = 'загрузка изображений... 0%';
+                let loadedCount = 0;
+                const totalImages = imageFiles.length;
+                
+                // Параллельная загрузка с повторными попытками
+                const loadPromises = imageFiles.map(async (filename, idx) => {
+                    let lastError = null;
+                    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                        try {
+                            const imgCanvas = await loadImageWithRetry(filename, idx, attempt);
+                            images[idx] = imgCanvas;
+                            loadedCount++;
+                            const percent = Math.round((loadedCount / totalImages) * 100);
+                            loadingIndicator.textContent = `загрузка изображений... ${percent}%`;
+                            return; // успех
+                        } catch (err) {
+                            lastError = err;
+                            console.warn(`Повторная попытка ${attempt + 1} для ${filename}`);
+                            // Небольшая задержка перед повторной попыткой, чтобы не перегружать сеть
+                            if (attempt < MAX_RETRIES) {
+                                await new Promise(r => setTimeout(r, 800));
+                            }
+                        }
+                    }
+                    // Если все попытки провалились, создаём заглушку
+                    console.error(`❌ ${filename} не загрузился после ${MAX_RETRIES+1} попыток`);
+                    const fallbackCanvas = document.createElement('canvas');
+                    fallbackCanvas.width = 400;
+                    fallbackCanvas.height = 300;
+                    const fallbackCtx = fallbackCanvas.getContext('2d');
+                    fallbackCtx.fillStyle = '#FF8888';
+                    fallbackCtx.fillRect(0, 0, 400, 300);
+                    fallbackCtx.fillStyle = '#000';
+                    fallbackCtx.font = '14px monospace';
+                    fallbackCtx.fillText(filename + ' (ошибка)', 10, 30);
+                    images[idx] = fallbackCanvas;
+                    loadedCount++;
+                    const percent = Math.round((loadedCount / totalImages) * 100);
+                    loadingIndicator.textContent = `загрузка изображений... ${percent}% (ошибки)`;
+                });
+                
+                await Promise.all(loadPromises);
+                
+                console.log('Все изображения обработаны');
+                imagesLoaded = true;
+                loadingIndicator.textContent = 'готово к запуску';
+                setTimeout(() => {
+                    if (loadingIndicator.textContent === 'готово к запуску') {
+                        loadingIndicator.style.opacity = '0.7';
+                    }
+                }, 1500);
+            }
+            
+            // ----- РИСОВАНИЕ ТЕКУЩЕГО ВИДА (с зумом) -----
+            function drawCurrentView() {
+                if (!fullCollage) return;
+                ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                ctx.drawImage(
+                    fullCollage,
+                    viewX, viewY, viewW, viewH,
+                    0, 0, CANVAS_W, CANVAS_H
+                );
+            }
+            
+            // ----- ПРОВЕРКА ЗАПОЛНЕНИЯ ХОЛСТА (оптимизированная, с меньшим шагом для точности) -----
+            function getCoveragePercent() {
+                // FIX 5: используем шаг 40 для ускорения вычислений на мобильных, но сохраняем точность
+                const step = 45;
+                let bgCount = 0;
+                let total = 0;
+                
+                try {
+                    const imgData = ctx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+                    const data = imgData.data;
+                    
+                    for (let y = 0; y < CANVAS_H; y += step) {
+                        for (let x = 0; x < CANVAS_W; x += step) {
+                            const idx = (y * CANVAS_W + x) * 4;
+                            // Проверка на выход за границы (на всякий случай)
+                            if (idx + 2 >= data.length) continue;
+                            const r = data[idx];
+                            const g = data[idx + 1];
+                            const b = data[idx + 2];
+                            
+                            // Фон #B5B5B5 (RGB 181,181,181) с допуском
+                            if (Math.abs(r - 181) < 20 && Math.abs(g - 181) < 20 && Math.abs(b - 181) < 20) {
+                                bgCount++;
+                            }
+                            total++;
+                        }
+                    }
+                    
+                    const filledPercent = 100 - (bgCount / total * 100);
+                    return Math.min(100, Math.max(0, filledPercent));
+                } catch(e) {
+                    console.warn("Ошибка при вычислении coverage", e);
+                    return 0;
+                }
+            }
+            
+            // ----- ШАГ АНИМАЦИИ (оптимизирован для мобильных) -----
+            // FIX 6: Уменьшаем количество вставок за кадр для более плавной работы на iPhone SE2
+            let lastTimestamp = 0;
+            function animationStep(timestamp) {
+                if (!animationActive) return;
+                if (!imagesLoaded || images.length === 0) {
+                    // Если изображения ещё не загружены, продолжаем ждать
+                    animationFrame = requestAnimationFrame(animationStep);
+                    return;
+                }
+                
+                // Контроль FPS: вставляем не более 2-3 фрагментов за кадр для стабильности,
+                // но сохраняем скорость заполнения за счёт того, что фрагменты больше.
+                // Раньше было 4 вставки, иногда слишком много для слабого мобильного процессора.
+                const insertsPerFrame = 3; 
+                
+                for (let i = 0; i < insertsPerFrame; i++) {
+                    // Берем случайное изображение из загруженных
+                    const img = images[Math.floor(Math.random() * images.length)];
+                    if (!img) continue;
+                    
+                    // Увеличиваем размер вставляемых фрагментов, чтобы быстрее заполнять холст
+                    // и не ждать вечность. При этом не перегружаем рендеринг.
+                    const w = Math.random() * 700 + 200;  // 200-900px
+                    const h = Math.random() * 700 + 200;
+                    const x = Math.random() * (CANVAS_W + 400) - 200;
+                    const y = Math.random() * (CANVAS_H + 400) - 200;
+                    
+                    // Случайные координаты источника с большим разнообразием
+                    const imgW = img.width;
+                    const imgH = img.height;
+                    if (imgW === 0 || imgH === 0) continue;
+                    
+                    const srcX = Math.floor(Math.random() * Math.max(1, imgW - 50));
+                    const srcY = Math.floor(Math.random() * Math.max(1, imgH - 50));
+                    const srcW = Math.min(150 + Math.random() * 300, imgW - srcX);
+                    const srcH = Math.min(150 + Math.random() * 300, imgH - srcY);
+                    
+                    if (srcW <= 0 || srcH <= 0) continue;
+                    
+                    try {
+                        ctx.drawImage(img, srcX, srcY, srcW, srcH, x, y, w, h);
+                    } catch(e) {
+                        console.warn("drawImage error", e);
+                    }
+                }
+                
+                const coverage = getCoveragePercent();
+                // Обновляем индикатор, но не чаще 5 раз в секунду для производительности
+                if (!window._lastCoverageUpdate || (timestamp - window._lastCoverageUpdate) > 200) {
+                    loadingIndicator.textContent = `заполнено ${coverage.toFixed(1)}%`;
+                    window._lastCoverageUpdate = timestamp;
+                }
+                
+                if (coverage >= 99.0) {
+                    console.log(`Достигнуто ${coverage.toFixed(1)}%! Останавливаем.`);
+                    stopAnimation();
+                    return;
+                }
+                
+                animationFrame = requestAnimationFrame(animationStep);
+            }
+            
+            // ----- ОСТАНОВКА АНИМАЦИИ -----
+            async function stopAnimation() {
+                animationActive = false;
+                if (animationFrame) {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
+                }
+                
+                console.log('Сохранение коллажа...');
+                loadingIndicator.textContent = 'сохранение...';
+                
+                // Создаём оффскрин копию текущего холста
+                try {
+                    // Используем createImageBitmap для эффективного кэширования
+                    const offscreen = new OffscreenCanvas(CANVAS_W, CANVAS_H);
+                    const offCtx = offscreen.getContext('2d');
+                    offCtx.drawImage(canvas, 0, 0);
+                    fullCollage = await createImageBitmap(offscreen);
+                    
+                    // Центрируем вид по финальному коллажу
+                    viewX = Math.max(0, Math.min(maxViewXLimit, (CANVAS_W / 2) - (viewW / 2)));
+                    viewY = Math.max(0, Math.min(maxViewYLimit, (CANVAS_H / 2) - (viewH / 2)));
+                    
+                    drawCurrentView();
+                    loadingIndicator.textContent = 'двигайте пальцем, чтобы увидеть всё';
+                    loadingIndicator.style.color = '#0f0';
+                    
+                    setTimeout(() => {
+                        loadingIndicator.style.opacity = '0.6';
+                    }, 4000);
+                } catch (err) {
+                    console.error("Ошибка сохранения коллажа", err);
+                    loadingIndicator.textContent = 'ошибка сохранения, но изображение доступно';
+                }
+                console.log('Готово! Панорамирование активно');
+            }
+            
+            // ----- ПАНОРАМИРОВАНИЕ (оптимизировано для сенсорных экранов) -----
+            function getCanvasCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = CANVAS_W / rect.width;
+                const scaleY = CANVAS_H / rect.height;
+                let clientX, clientY;
+                
+                if (e.touches) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else if (e.clientX !== undefined) {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                } else {
+                    return { x: lastX, y: lastY };
+                }
+                
+                // Ограничиваем координаты в пределах canvas rect
+                let canvasX = clientX - rect.left;
+                let canvasY = clientY - rect.top;
+                canvasX = Math.max(0, Math.min(rect.width, canvasX));
+                canvasY = Math.max(0, Math.min(rect.height, canvasY));
+                
+                return {
+                    x: canvasX * scaleX,
+                    y: canvasY * scaleY
+                };
+            }
+            
+            function onPointerDown(e) {
+                if (!fullCollage) return;
+                // Предотвращаем поведение браузера по умолчанию только если нужно панорамирование
+                e.preventDefault();
+                isPanning = true;
+                canvas.classList.add('panning');
+                
+                const coords = getCanvasCoords(e);
+                lastX = coords.x;
+                lastY = coords.y;
+            }
+            
+            function onPointerMove(e) {
+                if (!isPanning || !fullCollage) return;
+                e.preventDefault();
+                
+                const coords = getCanvasCoords(e);
+                let deltaX = coords.x - lastX;
+                let deltaY = coords.y - lastY;
+                
+                // Инвертированное движение для естественного панорамирования
+                viewX -= deltaX;
+                viewY -= deltaY;
+                
+                // Ограничения
+                viewX = Math.max(0, Math.min(maxViewXLimit, viewX));
+                viewY = Math.max(0, Math.min(maxViewYLimit, viewY));
+                
+                lastX = coords.x;
+                lastY = coords.y;
+                
+                drawCurrentView();
+            }
+            
+            function onPointerUp(e) {
+                isPanning = false;
+                canvas.classList.remove('panning');
+            }
+            
+            // ----- ЗАПУСК АНИМАЦИИ (с полной очисткой и подготовкой) -----
+            function startAnimation() {
+                console.log('ЗАПУСК АНИМАЦИИ');
+                
+                // Если анимация уже активна — не запускаем повторно
+                if (animationActive) return;
+                
+                // Скрываем сплеш
+                splash.classList.add('hidden');
+                
+                // Проверяем, загружены ли изображения, если нет — показываем индикатор и ждём
+                if (!imagesLoaded || images.length === 0) {
+                    console.log('Images not ready, waiting...');
+                    loadingIndicator.textContent = 'загрузка изображений...';
+                    loadingIndicator.style.color = '#ff0';
+                    loadingIndicator.style.opacity = '1';
+                    // Периодически проверяем готовность
+                    const waitInterval = setInterval(() => {
+                        if (imagesLoaded && images.length > 0) {
+                            clearInterval(waitInterval);
+                            startAnimation(); // Повторный вызов после загрузки
+                        }
+                    }, 200);
+                    return;
+                }
+                
+                // Инициализация холста: заливаем серым фоном
+                ctx.fillStyle = '#B5B5B5';
+                ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                
+                // Сбрасываем предыдущий коллаж
+                fullCollage = null;
+                animationActive = true;
+                
+                // Сброс панорамирования на начальную позицию (пока анимация идёт, панорамирование недоступно)
+                viewX = 0;
+                viewY = 0;
+                
+                loadingIndicator.textContent = 'заполнено 0.0%';
+                loadingIndicator.style.color = '#ff0';
+                loadingIndicator.style.opacity = '1';
+                window._lastCoverageUpdate = null;
+                
+                if (animationFrame) cancelAnimationFrame(animationFrame);
+                // Запускаем анимацию с requestAnimationFrame
+                animationFrame = requestAnimationFrame(animationStep);
+            }
+            
+            // ----- FIX 7: Добавляем обработчики событий для мыши и тач, с корректным preventDefault только на canvas -----
+            function attachPanEvents() {
+                canvas.addEventListener('pointerdown', onPointerDown);
+                canvas.addEventListener('pointermove', onPointerMove);
+                canvas.addEventListener('pointerup', onPointerUp);
+                canvas.addEventListener('pointercancel', onPointerUp);
+                // Блокируем контекстное меню на canvas
+                canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+                // Для touch-устройств: гарантируем, что touch-action: none уже в CSS
+            }
+            
+            // ----- FIX 8: Улучшенная инициализация с модальным ожиданием загрузки -----
+            async function init() {
+                attachPanEvents();
+                
+                // Показываем индикатор загрузки
+                loadingIndicator.textContent = 'загрузка изображений...';
+                loadingIndicator.style.opacity = '1';
+                loadingIndicator.style.color = '#ff0';
+                
+                // Загружаем изображения с повторными попытками и прогрессом
+                await loadAllImages();
+                
+                // Предварительная заливка фона
+                ctx.fillStyle = '#B5B5B5';
+                ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                
+                console.log('Инициализация завершена, ожидание кнопки');
+                loadingIndicator.textContent = 'нажмите "запустить"';
+                setTimeout(() => {
+                    if (loadingIndicator.textContent === 'нажмите "запустить"') {
+                        loadingIndicator.style.opacity = '0.7';
+                    }
+                }, 2000);
+            }
+            
+            // Обработчик кнопки старта с защитой от двойного запуска
+            let isStarting = false;
+            const handleStart = (e) => {
+                if (e) {
+                    e.preventDefault();
+                    if (e.type === 'touchstart') {
+                        // для touch событий не нужно повторно preventDefault, но оставляем
+                    }
+                }
+                if (isStarting) return;
+                isStarting = true;
+                // Небольшая задержка для предотвращения множественных вызовов
+                setTimeout(() => { isStarting = false; }, 1000);
+                startAnimation();
+            };
+            
+            playBtn.addEventListener('click', handleStart);
+            playBtn.addEventListener('touchstart', handleStart, { passive: false });
+            
+            // Стартуем инициализацию
+            init();
+        })();
+    </script>
+</body>
+</html>
