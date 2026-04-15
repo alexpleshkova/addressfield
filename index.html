@@ -212,7 +212,7 @@
                         }
                     }
                     // Если все попытки провалились, создаём заглушку
-                    /* console.error(`❌ ${filename} не загрузился после ${MAX_RETRIES+1} попыток`);
+                    console.error(`❌ ${filename} не загрузился после ${MAX_RETRIES+1} попыток`);
                     const fallbackCanvas = document.createElement('canvas');
                     fallbackCanvas.width = 400;
                     fallbackCanvas.height = 300;
@@ -226,7 +226,7 @@
                     loadedCount++;
                     const percent = Math.round((loadedCount / totalImages) * 100);
                     loadingIndicator.textContent = `загрузка изображений... ${percent}% (ошибки)`;
-                });*/
+                });
                 
                 await Promise.all(loadPromises);
                 
