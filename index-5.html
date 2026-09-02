@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <!-- FIX 1: Улучшенный viewport для iOS -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>мейл-арт адресные листы</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'></text></svg>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            background: #2a2a2a;
+            min-height: 100vh;
+            overflow: hidden;
+            font-family: 'Helvetica', system-ui, sans-serif;
+            touch-action: none;
+        }
+
+        #splash {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #B5B5B5;
+            z-index: 100;
+            transition: opacity 0.28s ease;
+        }
+        #splash.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .play-button {
+            background: #c6c6c6;
+            border: none;
+            color: black;
+            font-size: 2.5rem;
+            padding: 0.8rem 4rem;
+            border-radius: 3rem;
+            font-weight: 800;
+            letter-spacing: 2px;
+            cursor: pointer;
+            touch-action: manipulation;
+            position: relative;
+            z-index: 101;
+            transition: opacity 0.25s ease, transform 0.25s ease, background 0.25s ease;
+        }
+        .play-button:hover {
+            background: #9e9e9e;
+        }
+        .play-button[disabled] {
+            opacity: 0.4;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+        .play-button.ready {
+            animation: playPulse 1.4s ease-in-out infinite;
+        }
+        @keyframes playPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.06); }
+        }
+
+        .splash-inner {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.4rem;
+        }
+        .load-progress-track {
+            width: 220px;
+            height: 8px;
+            background: rgba(0,0,0,0.15);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .load-progress-bar {
+            height: 100%;
+            width: 0%;
+            background: #3a3a3a;
+            border-radius: 5px;
+            transition: width 0.25s ease;
+        }
+        .load-status {
+            font-size: 0.9rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            color: #333;
+            min-height: 1.2em;
+            text-align: center;
+            transition: opacity 0.3s ease;
+        }
+        .load-status.hidden {
+            opacity: 0;
+        }
+
+        #canvasWrapper {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: black;
+            z-index: 10;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            object-fit: fill;
+            background-color: #B5B5B5;
+            cursor: grab;
+            touch-action: none;
+        }
+        canvas.panning {
+            cursor: grabbing;
+        }
+
+        #loadingIndicator {
+            position: fixed;
+            bottom: 15px;
+            right: 15px;
+            background: rgba(0,0,0,0.75);
+            color: #0f0;
+            padding: 8px 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-family: monospace;
+            z-index: 50;
+            pointer-events: none;
+            font-weight: bold;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255,255,255,0.2);
+            transition: opacity 0.2s ease;
+        }
+    </style>
+</head>
+<body>
+    <div id="loadingIndicator">загрузка...</div>
+
+    <div id="splash">
+        <div class="splash-inner">
+            <button class="play-button" id="playBtn" disabled> запустить</button>
+            <div class="load-progress-track">
+                <div class="load-progress-bar" id="loadProgressBar"></div>
+            </div>
+            <div class="load-status" id="loadStatus">загрузка изображений… 0%</div>
+        </div>
+    </div>
+
+    <div id="canvasWrapper">
+        <canvas id="mainCanvas" width="3500" height="2480"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            // === Размер "поля" (мира картинок) ===
+            // На телефоне поле делаем немного больше числом пикселей, чем на компьютере,
+            // чтобы после заполнения было куда свайпать и было что "доисследовать".
+            // Хотите поле ещё больше на мобиле — просто увеличьте FIELD_SCALE_MOBILE.
+            const isMobile = window.matchMedia('(pointer: coarse)').matches ||
+                              Math.min(window.innerWidth, window.innerHeight) <= 820;
+
+            const BASE_CANVAS_W = 3500;
+            const BASE_CANVAS_H = 2480;
+            const FIELD_SCALE_MOBILE = 1.35;
+            const FIELD_SCALE_DESKTOP = 1;
+            const FIELD_SCALE = isMobile ? FIELD_SCALE_MOBILE : FIELD_SCALE_DESKTOP;
+
+            const CANVAS_W = Math.round(BASE_CANVAS_W * FIELD_SCALE);
+            const CANVAS_H = Math.round(BASE_CANVAS_H * FIELD_SCALE);
+            const ZOOM = 2.2;
+
+            const splash = document.getElementById('splash');
+            let playBtn = document.getElementById('playBtn');
+            const canvas = document.getElementById('mainCanvas');
+            const ctx = canvas.getContext('2d');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const loadProgressBar = document.getElementById('loadProgressBar');
+            const loadStatus = document.getElementById('loadStatus');
+
+            // Угловой индикатор нужен только во время заполнения/исследования —
+            // до нажатия кнопки о загрузке рассказывает прогресс-бар на самой заставке.
+            loadingIndicator.style.opacity = '0';
+
+            // Видимый canvas получает то же внутреннее разрешение, что и поле —
+            // это нужно, чтобы панорамирование (свайп) считало координаты верно.
+            canvas.width = CANVAS_W;
+            canvas.height = CANVAS_H;
+
+            // Скрытый "мировой" холст: сюда рисуются ВСЕ случайные картинки на
+            // протяжении всего процесса заполнения — это полноразмерное поле.
+            // На экран (canvas выше) всегда попадает только увеличенный (зумленный)
+            // кусок этого холста — и во время заполнения, и во время исследования.
+            const worldCanvas = document.createElement('canvas');
+            worldCanvas.width = CANVAS_W;
+            worldCanvas.height = CANVAS_H;
+            const worldCtx = worldCanvas.getContext('2d');
+            
+            const imageFiles = [
+                '26rn260.jpg',
+                '32rn291-copy.jpg', 
+                '32rn292.jpg',
+                '33rn300-01.jpg',
+                '39rn330.jpg',
+                '40rn334-01.jpg',
+                '73rn-01-copy.jpg',
+                '73rn-02-copy.jpg'
+            ];
+
+            let images = [];
+            let imagesLoaded = false;
+            let animationActive = false;
+            let animationFrame = null;
+            let fullCollage = null;
+            
+            const MAX_RETRIES = 2;
+            
+            let isPanning = false;
+            let lastX = 0, lastY = 0;
+            let viewX = 0, viewY = 0;
+            
+            const viewW = CANVAS_W / ZOOM;
+            const viewH = CANVAS_H / ZOOM;
+            const maxViewXLimit = CANVAS_W - viewW;
+            const maxViewYLimit = CANVAS_H - viewH;
+
+            // Центрирует "зумленный" вид на поле. Вызывается ДО начала заполнения,
+            // чтобы всё заполнение шло уже на приближённом виде, без скачка зума в конце.
+            function centerView() {
+                viewX = Math.max(0, Math.min(maxViewXLimit, (CANVAS_W / 2) - (viewW / 2)));
+                viewY = Math.max(0, Math.min(maxViewYLimit, (CANVAS_H / 2) - (viewH / 2)));
+            }
+
+            let coverageCheckCounter = 0;
+            let lastCoverage = 0;
+            
+            function loadImageWithRetry(filename, index, retryCount = 0) {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    let timeoutId = setTimeout(() => {
+                        img.src = '';
+                        reject(new Error(`Timeout loading ${filename}`));
+                    }, 15000);
+                    
+                    img.onload = () => {
+                        clearTimeout(timeoutId);
+                        console.log(`✅ ${filename} (${img.width}x${img.height})`);
+                        const canvasImg = document.createElement('canvas');
+                        canvasImg.width = img.width;
+                        canvasImg.height = img.height;
+                        const imgCtx = canvasImg.getContext('2d');
+                        imgCtx.drawImage(img, 0, 0);
+                        resolve(canvasImg);
+                    };
+                    
+                    img.onerror = () => {
+                        clearTimeout(timeoutId);
+                        console.error(`❌ ${filename} (попытка ${retryCount + 1})`);
+                        reject(new Error(`Failed to load ${filename}`));
+                    };
+                    
+                    img.src = filename + '?t=' + Date.now() + '_retry_' + retryCount;
+                });
+            }
+            
+            // Сколько картинок достаточно загрузить, чтобы разрешить нажатие кнопки.
+            // Не ждём ВСЕ 8 (это и есть те самые ~10 секунд) — как только готово
+            // READY_THRESHOLD штук, кнопка становится живой, а остальные картинки
+            // продолжают догружаться в фоне и вливаются в ротацию по готовности.
+            const READY_THRESHOLD = Math.min(2, imageFiles.length);
+
+            function setButtonReady() {
+                if (imagesLoaded) return;
+                imagesLoaded = true;
+                finalBtn.disabled = false;
+                finalBtn.classList.add('ready');
+                loadStatus.textContent = 'готово — жмите!';
+                setTimeout(() => loadStatus.classList.add('hidden'), 900);
+            }
+
+            async function loadAllImages() {
+                loadStatus.textContent = 'загрузка изображений… 0%';
+                loadProgressBar.style.width = '0%';
+                let loadedCount = 0;
+                const totalImages = imageFiles.length;
+                
+                const loadPromises = imageFiles.map(async (filename, idx) => {
+                    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                        try {
+                            const imgCanvas = await loadImageWithRetry(filename, idx, attempt);
+                            images[idx] = imgCanvas;
+                            loadedCount++;
+                            const percent = Math.round((loadedCount / totalImages) * 100);
+                            loadProgressBar.style.width = percent + '%';
+                            loadStatus.textContent = `загрузка изображений… ${percent}%`;
+                            if (loadedCount >= READY_THRESHOLD) setButtonReady();
+                            return;
+                        } catch (err) {
+                            console.warn(`Повторная попытка ${attempt + 1} для ${filename}`);
+                            if (attempt < MAX_RETRIES) {
+                                await new Promise(r => setTimeout(r, 800));
+                            }
+                        }
+                    }
+                    console.error(`❌ ${filename} не загрузился после ${MAX_RETRIES+1} попыток`);
+                    const fallbackCanvas = document.createElement('canvas');
+                    fallbackCanvas.width = 400;
+                    fallbackCanvas.height = 300;
+                    const fallbackCtx = fallbackCanvas.getContext('2d');
+                    fallbackCtx.fillStyle = '#FF8888';
+                    fallbackCtx.fillRect(0, 0, 400, 300);
+                    fallbackCtx.fillStyle = '#000';
+                    fallbackCtx.font = '14px monospace';
+                    fallbackCtx.fillText(filename + ' (ошибка)', 10, 30);
+                    images[idx] = fallbackCanvas;
+                    loadedCount++;
+                    const percent = Math.round((loadedCount / totalImages) * 100);
+                    loadProgressBar.style.width = percent + '%';
+                    loadStatus.textContent = `загрузка изображений… ${percent}% (ошибки)`;
+                    if (loadedCount >= READY_THRESHOLD) setButtonReady();
+                });
+                
+                // Не блокируем кнопку до конца — просто ждём, пока догрузится остальное,
+                // и тихо логируем в фоне. Если картинок меньше порога, кнопка всё равно
+                // включится сразу после setButtonReady() внутри цикла выше.
+                await Promise.all(loadPromises);
+                console.log('Все изображения обработаны');
+                setButtonReady();
+            }
+            
+            function drawCurrentView(source) {
+                const src = source || fullCollage;
+                if (!src) return;
+                ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+                ctx.drawImage(
+                    src,
+                    viewX, viewY, viewW, viewH,
+                    0, 0, CANVAS_W, CANVAS_H
+                );
+            }
+            
+            function getCoveragePercent() {
+                const step = 45;
+                let bgCount = 0;
+                let total = 0;
+                
+                try {
+                    const imgData = worldCtx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+                    const data = imgData.data;
+                    
+                    for (let y = 0; y < CANVAS_H; y += step) {
+                        for (let x = 0; x < CANVAS_W; x += step) {
+                            const idx = (y * CANVAS_W + x) * 4;
+                            if (idx + 2 >= data.length) continue;
+                            const r = data[idx];
+                            const g = data[idx + 1];
+                            const b = data[idx + 2];
+                            
+                            if (Math.abs(r - 181) < 20 && Math.abs(g - 181) < 20 && Math.abs(b - 181) < 20) {
+                                bgCount++;
+                            }
+                            total++;
+                        }
+                    }
+                    
+                    const filledPercent = 100 - (bgCount / total * 100);
+                    return Math.min(100, Math.max(0, filledPercent));
+                } catch(e) {
+                    console.warn("Ошибка при вычислении coverage", e);
+                    return 0;
+                }
+            }
+            
+            // FIX: ВОССТАНОВЛЕНА ОРИГИНАЛЬНАЯ АНИМАЦИЯ с большими размерами и отрицательными координатами
+            function animationStep(timestamp) {
+                if (!animationActive) return;
+                if (!imagesLoaded || images.length === 0) {
+                    animationFrame = requestAnimationFrame(animationStep);
+                    return;
+                }
+                
+                const insertsPerFrame = 4;
+                
+                for (let i = 0; i < insertsPerFrame; i++) {
+                    const img = images[Math.floor(Math.random() * images.length)];
+                    if (!img) continue;
+                    
+                    // FIX: ВОЗВРАЩЕНЫ ОРИГИНАЛЬНЫЕ ЗНАЧЕНИЯ - большие размеры до 4000px и отрицательные координаты
+                    const w = Math.random() * 4000 - 500;
+                    const h = Math.random() * 2980 - 500;
+                    const x = Math.random() * (CANVAS_W + 1000) - 500;
+                    const y = Math.random() * (CANVAS_H + 1000) - 500;
+                    
+                    const imgW = img.width;
+                    const imgH = img.height;
+                    if (imgW === 0 || imgH === 0) continue;
+                    
+                    // Оригинальный способ выбора случайных координат источника
+                    const srcX1 = Math.floor(Math.random() * 5000) + 1;
+                    const srcY1 = Math.floor(Math.random() * 5000) + 1;
+                    const srcX2 = Math.floor(Math.random() * 5000) + 5000;
+                    const srcY2 = Math.floor(Math.random() * 5000) + 5000;
+                    
+                    const sx = srcX1 % imgW;
+                    const sy = srcY1 % imgH;
+                    const sx2 = srcX2 % imgW;
+                    const sy2 = srcY2 % imgH;
+                    
+                    const srcW = Math.max(1, Math.abs(sx2 - sx));
+                    const srcH = Math.max(1, Math.abs(sy2 - sy));
+                    
+                    try {
+                        worldCtx.drawImage(img, sx, sy, srcW, srcH, x, y, w, h);
+                    } catch(e) {
+                        console.warn("drawImage error", e);
+                    }
+                }
+                
+                // Показываем уже приближённый (зумленный) фрагмент поля — тот же
+                // уровень зума, что будет при "исследовании" после заполнения.
+                drawCurrentView(worldCanvas);
+                
+                // Поле теперь больше, поэтому считаем заполненность не каждый кадр,
+                // а раз в несколько кадров — иначе getImageData будет тормозить на телефоне.
+                coverageCheckCounter++;
+                if (coverageCheckCounter % 3 === 0) {
+                    lastCoverage = getCoveragePercent();
+                }
+                
+                if (!window._lastCoverageUpdate || (timestamp - window._lastCoverageUpdate) > 200) {
+                    loadingIndicator.textContent = `заполнено ${lastCoverage.toFixed(1)}%`;
+                    window._lastCoverageUpdate = timestamp;
+                }
+                
+                if (lastCoverage >= 99.0) {
+                    console.log(`Достигнуто ${lastCoverage.toFixed(1)}%! Останавливаем.`);
+                    stopAnimation();
+                    return;
+                }
+                
+                animationFrame = requestAnimationFrame(animationStep);
+            }
+            
+            async function stopAnimation() {
+                animationActive = false;
+                if (animationFrame) {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
+                }
+                
+                console.log('Сохранение коллажа...');
+                loadingIndicator.textContent = 'сохранение...';
+                
+                try {
+                    // Берём снимок мирового холста напрямую — вид (viewX/viewY) уже был
+                    // приближен и центрирован с самого начала заполнения, так что здесь
+                    // никакого скачка зума не происходит, просто фиксируем результат.
+                    fullCollage = await createImageBitmap(worldCanvas);
+                    
+                    drawCurrentView();
+                    loadingIndicator.textContent = 'двигайте пальцем, чтобы увидеть всё';
+                    loadingIndicator.style.color = '#0f0';
+                    
+                    setTimeout(() => {
+                        loadingIndicator.style.opacity = '0.6';
+                    }, 4000);
+                } catch (err) {
+                    console.error("Ошибка createImageBitmap, используем canvas напрямую", err);
+                    // Запасной вариант для браузеров без createImageBitmap: canvas и так
+                    // прекрасно работает как источник для drawImage.
+                    fullCollage = worldCanvas;
+                    drawCurrentView();
+                    loadingIndicator.textContent = 'двигайте пальцем, чтобы увидеть всё';
+                    loadingIndicator.style.color = '#0f0';
+                }
+                console.log('Готово! Панорамирование активно');
+            }
+            
+            function getCanvasCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = CANVAS_W / rect.width;
+                const scaleY = CANVAS_H / rect.height;
+                let clientX, clientY;
+                
+                if (e.touches) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else if (e.clientX !== undefined) {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                } else {
+                    return { x: lastX, y: lastY };
+                }
+                
+                let canvasX = clientX - rect.left;
+                let canvasY = clientY - rect.top;
+                canvasX = Math.max(0, Math.min(rect.width, canvasX));
+                canvasY = Math.max(0, Math.min(rect.height, canvasY));
+                
+                return {
+                    x: canvasX * scaleX,
+                    y: canvasY * scaleY
+                };
+            }
+            
+            function onPointerDown(e) {
+                if (!fullCollage) return;
+                e.preventDefault();
+                isPanning = true;
+                canvas.classList.add('panning');
+                
+                const coords = getCanvasCoords(e);
+                lastX = coords.x;
+                lastY = coords.y;
+            }
+            
+            function onPointerMove(e) {
+                if (!isPanning || !fullCollage) return;
+                e.preventDefault();
+                
+                const coords = getCanvasCoords(e);
+                let deltaX = coords.x - lastX;
+                let deltaY = coords.y - lastY;
+                
+                viewX -= deltaX;
+                viewY -= deltaY;
+                
+                viewX = Math.max(0, Math.min(maxViewXLimit, viewX));
+                viewY = Math.max(0, Math.min(maxViewYLimit, viewY));
+                
+                lastX = coords.x;
+                lastY = coords.y;
+                
+                drawCurrentView();
+            }
+            
+            function onPointerUp(e) {
+                isPanning = false;
+                canvas.classList.remove('panning');
+            }
+            
+            function startAnimation() {
+                console.log('ЗАПУСК АНИМАЦИИ');
+                
+                if (animationActive) return;
+                
+                if (!imagesLoaded || images.length === 0) {
+                    console.log('Images not ready, waiting...');
+                    loadingIndicator.textContent = 'загрузка изображений...';
+                    loadingIndicator.style.color = '#ff0';
+                    loadingIndicator.style.opacity = '1';
+                    const waitInterval = setInterval(() => {
+                        if (imagesLoaded && images.length > 0) {
+                            clearInterval(waitInterval);
+                            startAnimation();
+                        }
+                    }, 200);
+                    return;
+                }
+                
+                splash.classList.add('hidden');
+                
+                worldCtx.fillStyle = '#B5B5B5';
+                worldCtx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                
+                fullCollage = null;
+                animationActive = true;
+                coverageCheckCounter = 0;
+                lastCoverage = 0;
+
+                // Зумим и центрируем вид СРАЗУ — заполнение идёт на полноразмерном поле
+                // "за кулисами", а на экране всё время виден уже приближённый кусок.
+                centerView();
+                drawCurrentView(worldCanvas);
+                
+                loadingIndicator.textContent = 'заполнено 0.0%';
+                loadingIndicator.style.color = '#ff0';
+                loadingIndicator.style.opacity = '1';
+                window._lastCoverageUpdate = null;
+                
+                if (animationFrame) cancelAnimationFrame(animationFrame);
+                animationFrame = requestAnimationFrame(animationStep);
+            }
+            
+            function attachPanEvents() {
+                canvas.addEventListener('pointerdown', onPointerDown);
+                canvas.addEventListener('pointermove', onPointerMove);
+                canvas.addEventListener('pointerup', onPointerUp);
+                canvas.addEventListener('pointercancel', onPointerUp);
+                canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+            }
+            
+            async function init() {
+                attachPanEvents();
+                
+                await loadAllImages();
+                
+                worldCtx.fillStyle = '#B5B5B5';
+                worldCtx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                centerView();
+                drawCurrentView(worldCanvas);
+                
+                console.log('Инициализация завершена');
+            }
+            
+            let isStarting = false;
+            function handleStart(e) {
+                if (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+                if (isStarting) return;
+                isStarting = true;
+                
+                console.log('Кнопка нажата!');
+                
+                setTimeout(() => { 
+                    isStarting = false; 
+                }, 1000);
+                
+                startAnimation();
+            }
+
+
+            
+            const newBtn = playBtn.cloneNode(true);
+            playBtn.parentNode.replaceChild(newBtn, playBtn);
+            const finalBtn = document.getElementById('playBtn');
+            
+            finalBtn.addEventListener('click', handleStart);
+            finalBtn.addEventListener('touchstart', handleStart, { passive: false });
+            
+            
+            init();
+        })();
+    </script>
+</body>
+</html>
